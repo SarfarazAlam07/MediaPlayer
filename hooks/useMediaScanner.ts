@@ -1,81 +1,69 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
+import { useMediaStore } from '../store/useMediaStore';
 
 export const useMediaScanner = () => {
-  const [allVideos, setAllVideos] = useState<MediaLibrary.Asset[]>([]); // Saari videos ke liye
-  const [allAudio, setAllAudio] = useState<MediaLibrary.Asset[]>([]); // 🔥 Naya state
-  const [folders, setFolders] = useState<MediaLibrary.Album[]>([]); // Folder-wise list ke liye
+  const [allAudio, setAllAudio] = useState<MediaLibrary.Asset[]>([]); 
+  const [folders, setFolders] = useState<MediaLibrary.Album[]>([]); 
   const [loading, setLoading] = useState(true);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+  
+  // Store se function nikalo
+  const { setGlobalVideos, sortOrder } = useMediaStore();
 
-  const scanMedia = useCallback(async (sortBy: any = MediaLibrary.SortBy.creationTime) => {
+  const scanMedia = useCallback(async () => {
     setLoading(true);
     const { status } = await MediaLibrary.requestPermissionsAsync();
 
     if (status === 'granted') {
-      setPermissionGranted(true);
-
-      // --- 1. FOLDERS SCANNING LOGIC ---
-      // Phone ke saare albums (folders) fetch karo
+      // 1. Folders
       const albums = await MediaLibrary.getAlbumsAsync();
-      
-      
-      // Sirf wahi folders filter karo jinme asliyat mein Videos hain
       const videoFolders = await Promise.all(
         albums.map(async (album) => {
           const assets = await MediaLibrary.getAssetsAsync({
-            album: album.id,
-            mediaType: MediaLibrary.MediaType.video,
-            first: 1, // Sirf check karne ke liye ki video hai ya nahi
+            album: album.id, mediaType: MediaLibrary.MediaType.video, first: 1, 
           });
-          // Agar folder mein video count 0 se zyada hai, tabhi return karo
           return assets.totalCount > 0 ? album : null;
         })
       );
-      // Null values hatake state update karo
       setFolders(videoFolders.filter((f) => f !== null) as MediaLibrary.Album[]);
 
-      // --- 2. ALL VIDEOS SCANNING LOGIC ---
+      // 2. Videos (Yahan stored sort order use hoga)
       const media = await MediaLibrary.getAssetsAsync({
         mediaType: MediaLibrary.MediaType.video,
-        first: 100, // Performance ke liye top 100
-        sortBy: [sortBy],
+        first: 100, 
+        sortBy: [sortOrder], 
       });
+
+      // 3. Audio
       const audioData = await MediaLibrary.getAssetsAsync({
         mediaType: MediaLibrary.MediaType.audio,
-        first: 200, // Music thoda zyada fetch kar lete hain
+        first: 200, 
         sortBy: [MediaLibrary.SortBy.creationTime],
       });
       setAllAudio(audioData.assets);
 
-      // Har video ki deep details (Size, localUri for Thumbnails) nikalna
+      // 4. Exact Size from FileSystem
       const detailedAssets = await Promise.all(
         media.assets.map(async (asset) => {
           try {
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-            return { ...asset, ...info };
-          } catch (e) {
-            return asset; // Fallback agar info fail ho jaye
+            const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+            return { ...asset, size: fileInfo.exists ? fileInfo.size : 0 };
+          } catch (e) { 
+            return { ...asset, size: 0 }; 
           }
         })
       );
 
-      setAllVideos(detailedAssets as any);
-    } else {
-      setPermissionGranted(false);
+      // Seedha global memory mein save
+      setGlobalVideos(detailedAssets as any);
     }
     setLoading(false);
-  }, []);
+  }, [sortOrder, setGlobalVideos]);
 
   useEffect(() => {
     scanMedia();
   }, [scanMedia]);
 
-  return { 
-    allVideos, 
-    folders, 
-    loading, 
-    permissionGranted, 
-    rescan: scanMedia 
-  };
+  return { allAudio, folders, loading, rescan: scanMedia };
 };

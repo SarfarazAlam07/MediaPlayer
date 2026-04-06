@@ -1,9 +1,10 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import * as MediaLibrary from "expo-media-library";
 import { useRouter } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -13,17 +14,28 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import FolderCard from "../../components/cards/FolderCard"; // 🔥 Naya Component
+import FolderCard from "../../components/cards/FolderCard";
 import VideoCard from "../../components/cards/VideoCard";
 import { Colors } from "../../constants/Colors";
 import { useMediaScanner } from "../../hooks/useMediaScanner";
+import { useMediaStore } from "../../store/useMediaStore";
 
 export default function HomeScreen() {
-  const { allVideos, folders, loading, rescan } = useMediaScanner();
+  const { folders, loading, rescan } = useMediaScanner();
+  const { globalVideos, setSortOrder, loadInitialData, removeGlobalVideos } =
+    useMediaStore();
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [viewMode, setViewMode] = useState<"folders" | "all">("folders"); // 🔥 Switcher State
+  const [viewMode, setViewMode] = useState<"folders" | "all">("folders");
   const [sortVisible, setSortVisible] = useState(false);
   const router = useRouter();
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    loadInitialData();
+  }, []);
 
   const sortOptions = [
     { label: "Latest First", value: MediaLibrary.SortBy.creationTime },
@@ -31,15 +43,65 @@ export default function HomeScreen() {
     { label: "Alphabetical", value: MediaLibrary.SortBy.default },
   ];
 
-  const changeSort = (val: any) => {
-    rescan(val);
+  const changeSort = async (val: any) => {
     setSortVisible(false);
+    await setSortOrder(val);
+    rescan();
   };
 
-  // 🔥 1. Filter Logic (Dono Tabs ke liye)
+  const toggleSelection = (id: string) => {
+    if (selectedIds.includes(id)) {
+      const newSelection = selectedIds.filter((item) => item !== id);
+      setSelectedIds(newSelection);
+      if (newSelection.length === 0) setSelectionMode(false);
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  const handleCardPress = (id: string) => {
+    if (selectionMode) {
+      toggleSelection(id);
+    } else {
+      router.push(`/player/${id}` as any);
+    }
+  };
+
+  const handleLongPress = (id: string) => {
+    if (!selectionMode) {
+      setSelectionMode(true);
+      setSelectedIds([id]);
+    }
+  };
+
+  const deleteSelectedVideos = async () => {
+    Alert.alert(
+      "Delete Videos",
+      `Are you sure you want to delete ${selectedIds.length} video(s) permanently?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await MediaLibrary.deleteAssetsAsync(selectedIds);
+              removeGlobalVideos(selectedIds);
+              setSelectionMode(false);
+              setSelectedIds([]);
+            } catch (error) {
+              console.log("Delete failed:", error);
+              Alert.alert("Error", "Could not delete the selected videos.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const filteredData = useMemo(() => {
     if (viewMode === "all") {
-      return allVideos.filter((v) =>
+      return globalVideos.filter((v) =>
         v.filename.toLowerCase().includes(searchQuery.toLowerCase()),
       );
     } else {
@@ -47,9 +109,9 @@ export default function HomeScreen() {
         f.title.toLowerCase().includes(searchQuery.toLowerCase()),
       );
     }
-  }, [allVideos, folders, searchQuery, viewMode]);
+  }, [globalVideos, folders, searchQuery, viewMode]);
 
-  if (loading)
+  if (loading && globalVideos.length === 0)
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={Colors.primary} />
@@ -58,90 +120,122 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 🔍 Premium Header & Search */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Hybrid Player</Text>
-
-        <View style={styles.searchRow}>
-          <View style={styles.searchBar}>
-            <MaterialIcons name="search" size={20} color={Colors.textMuted} />
-            <TextInput
-              placeholder={
-                viewMode === "all" ? "Search videos..." : "Search folders..."
-              }
-              placeholderTextColor={Colors.textMuted}
-              style={styles.searchInput}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
-
-          {/* Sort Button sirf 'All Videos' mein kaam karega */}
-          {viewMode === "all" && (
+        {selectionMode ? (
+          <View style={styles.selectionHeader}>
             <TouchableOpacity
-              onPress={() => setSortVisible(true)}
-              style={styles.sortBtn}
+              onPress={() => {
+                setSelectionMode(false);
+                setSelectedIds([]);
+              }}
             >
-              <MaterialIcons name="sort" size={24} color="#fff" />
+              <MaterialIcons name="close" size={28} color="#fff" />
             </TouchableOpacity>
-          )}
-        </View>
+            <Text style={styles.selectionText}>
+              {selectedIds.length} Selected
+            </Text>
+            <TouchableOpacity
+              onPress={() => setSelectedIds(filteredData.map((v) => v.id))}
+            >
+              <MaterialIcons name="select-all" size={28} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={styles.headerTitle}>Hybrid Player</Text>
+        )}
 
-        {/* 🎬 Segmented Control (Tabs) */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, viewMode === "folders" && styles.activeTab]}
-            onPress={() => setViewMode("folders")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                viewMode === "folders" && styles.activeTabText,
-              ]}
-            >
-              Folders
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, viewMode === "all" && styles.activeTab]}
-            onPress={() => setViewMode("all")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                viewMode === "all" && styles.activeTabText,
-              ]}
-            >
-              All Videos
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {!selectionMode && (
+          <>
+            <View style={styles.searchRow}>
+              <View style={styles.searchBar}>
+                <MaterialIcons
+                  name="search"
+                  size={20}
+                  color={Colors.textMuted}
+                />
+                <TextInput
+                  placeholder={
+                    viewMode === "all"
+                      ? "Search videos..."
+                      : "Search folders..."
+                  }
+                  placeholderTextColor={Colors.textMuted}
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+              {viewMode === "all" && (
+                <TouchableOpacity
+                  onPress={() => setSortVisible(true)}
+                  style={styles.sortBtn}
+                >
+                  <MaterialIcons name="sort" size={24} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, viewMode === "folders" && styles.activeTab]}
+                onPress={() => setViewMode("folders")}
+              >
+                <Text
+                  style={[
+                    styles.tabText,
+                    viewMode === "folders" && styles.activeTabText,
+                  ]}
+                >
+                  Folders
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tab, viewMode === "all" && styles.activeTab]}
+                onPress={() => setViewMode("all")}
+              >
+                <Text
+                  style={[
+                    styles.tabText,
+                    viewMode === "all" && styles.activeTabText,
+                  ]}
+                >
+                  All Videos
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
       </View>
 
-      {/* 📜 Dynamic List */}
       <FlatList
         data={filteredData}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={{ paddingBottom: 130 }}
         renderItem={({ item }) =>
           viewMode === "all" ? (
             <VideoCard
+              id={item.id}
               title={item.filename}
               duration={item.duration}
               resolution={`${item.width}x${item.height}`}
               date={item.creationTime}
               size={item.size}
               uri={item.uri}
-              onPress={() => router.push(`/player/${item.id}` as any)}
+              selectionMode={selectionMode}
+              isSelected={selectedIds.includes(item.id)}
+              onLongPress={() => handleLongPress(item.id)}
+              onPress={() => handleCardPress(item.id)}
             />
           ) : (
             <FolderCard
               name={item.title}
               count={item.assetCount}
-              onPress={() => {
-                // Future: Folder Detail Screen par bhejne ke liye
-                alert(`Opening folder: ${item.title}`);
-              }}
+              // 🔥 YAHAN CHANGE HAI: Alert hata kar naye page par bhej rahe hain
+              onPress={() =>
+                router.push(
+                  `/folder/${item.id}?title=${encodeURIComponent(item.title)}` as any,
+                )
+              }
             />
           )
         }
@@ -150,7 +244,20 @@ export default function HomeScreen() {
         }
       />
 
-      {/* 🚀 Sort Modal */}
+      {selectionMode && selectedIds.length > 0 && (
+        <View style={styles.deleteActionBar}>
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            onPress={deleteSelectedVideos}
+          >
+            <MaterialIcons name="delete-outline" size={24} color="#fff" />
+            <Text style={styles.deleteBtnText}>
+              Delete ({selectedIds.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <Modal visible={sortVisible} transparent animationType="slide">
         <Pressable
           style={styles.modalOverlay}
@@ -197,6 +304,15 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 15,
   },
+
+  selectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 15,
+  },
+  selectionText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -225,24 +341,41 @@ const styles = StyleSheet.create({
     padding: 4,
     marginBottom: 5,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-    borderRadius: 8,
-  },
-  activeTab: {
-    backgroundColor: Colors.surfaceHighlight,
-  },
-  tabText: {
-    color: Colors.textMuted,
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  activeTabText: {
-    color: Colors.primary,
-  },
+  tab: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: 8 },
+  activeTab: { backgroundColor: Colors.surfaceHighlight },
+  tabText: { color: Colors.textMuted, fontWeight: "600", fontSize: 14 },
+  activeTabText: { color: Colors.primary },
   emptyText: { color: Colors.textMuted, textAlign: "center", marginTop: 50 },
+
+  deleteActionBar: {
+    position: "absolute",
+    bottom: 85,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  deleteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 30,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+  },
+  deleteBtnText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
+    marginLeft: 8,
+  },
+
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.7)",
