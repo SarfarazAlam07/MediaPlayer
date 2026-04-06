@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "hybridplayer",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false, 
+    "newArchEnabled": true, 
     "android": {
       "package": "com.sarfarazalam.hybridplayer",
       "permissions": [
