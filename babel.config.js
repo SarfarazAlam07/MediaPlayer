@@ -3,7 +3,7 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
-      'react-native-reanimated/plugin', // 🔥 Ye line Cloud server ko rasta dikhayegi
+      'react-native-reanimated/plugin', 
     ],
   };
 };
