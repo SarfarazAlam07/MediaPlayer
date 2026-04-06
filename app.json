@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "hybridplayer",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false, 
     "android": {
       "package": "com.sarfarazalam.hybridplayer",
       "permissions": [
@@ -15,39 +15,12 @@
         "WRITE_EXTERNAL_STORAGE",
         "ACCESS_MEDIA_LOCATION",
         "RECORD_AUDIO"
-      ],
-      "edgeToEdgeEnabled": true
+      ]
     },
     "plugins": [
       "expo-router",
-      "expo-media-library", // 🔥 Storage scan karne ke liye zaroori
-      "expo-video-thumbnails", // 🔥 Thumbnails ke liye zaroori
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "resizeMode": "contain",
-          "backgroundColor": "#000000"
-        }
-      ],
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "compileSdkVersion": 35,
-            "targetSdkVersion": 35,
-            "minSdkVersion": 26,
-            "packagingOptions": {
-              "pickFirst": [
-                "lib/x86/libc++_shared.so",
-                "lib/x86_64/libc++_shared.so",
-                "lib/armeabi-v7a/libc++_shared.so",
-                "lib/arm64-v8a/libc++_shared.so"
-              ]
-            }
-          }
-        }
-      ]
+      "expo-media-library",
+      "expo-navigation-bar"
     ],
     "extra": {
       "eas": {

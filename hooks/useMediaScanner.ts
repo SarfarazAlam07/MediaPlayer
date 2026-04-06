@@ -3,6 +3,7 @@ import * as MediaLibrary from 'expo-media-library';
 
 export const useMediaScanner = () => {
   const [allVideos, setAllVideos] = useState<MediaLibrary.Asset[]>([]); // Saari videos ke liye
+  const [allAudio, setAllAudio] = useState<MediaLibrary.Asset[]>([]); // 🔥 Naya state
   const [folders, setFolders] = useState<MediaLibrary.Album[]>([]); // Folder-wise list ke liye
   const [loading, setLoading] = useState(true);
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -17,6 +18,7 @@ export const useMediaScanner = () => {
       // --- 1. FOLDERS SCANNING LOGIC ---
       // Phone ke saare albums (folders) fetch karo
       const albums = await MediaLibrary.getAlbumsAsync();
+      
       
       // Sirf wahi folders filter karo jinme asliyat mein Videos hain
       const videoFolders = await Promise.all(
@@ -39,6 +41,12 @@ export const useMediaScanner = () => {
         first: 100, // Performance ke liye top 100
         sortBy: [sortBy],
       });
+      const audioData = await MediaLibrary.getAssetsAsync({
+        mediaType: MediaLibrary.MediaType.audio,
+        first: 200, // Music thoda zyada fetch kar lete hain
+        sortBy: [MediaLibrary.SortBy.creationTime],
+      });
+      setAllAudio(audioData.assets);
 
       // Har video ki deep details (Size, localUri for Thumbnails) nikalna
       const detailedAssets = await Promise.all(
