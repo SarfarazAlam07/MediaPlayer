@@ -5,7 +5,7 @@ import * as Brightness from "expo-brightness";
 import * as MediaLibrary from "expo-media-library";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -16,35 +16,44 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useEvent } from "expo";
 import { Colors } from "../../constants/Colors";
 import { useMediaStore } from "../../store/useMediaStore";
+import { usePlayerStore } from "../../store/usePlayerStore";
 import { formatTime } from "../../utils/timeFormat";
 
 export default function PlayerScreen() {
-  const { id, slide } = useLocalSearchParams(); // 'slide' parameter for animation
+  const { id, slide } = useLocalSearchParams();
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [videoTitle, setVideoTitle] = useState<string>("Loading...");
   const [loading, setLoading] = useState(true);
+  const isMounted = useRef(true);
 
   useEffect(() => {
+    isMounted.current = true;
+    
     const loadVideo = async () => {
       if (typeof id === "string") {
         try {
           const assetInfo = await MediaLibrary.getAssetInfoAsync(id);
-          setVideoUri(assetInfo.localUri || assetInfo.uri);
-          setVideoTitle(assetInfo.filename || "Unknown Video");
+          if (isMounted.current) {
+            setVideoUri(assetInfo.localUri || assetInfo.uri);
+            setVideoTitle(assetInfo.filename || "Unknown Video");
+          }
         } catch (error) {
           console.error("Video load failed:", error);
         } finally {
-          setLoading(false);
+          if (isMounted.current) setLoading(false);
         }
       }
     };
     loadVideo();
+    
     return () => {
+      isMounted.current = false;
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
   }, [id]);
@@ -63,12 +72,25 @@ export default function PlayerScreen() {
 function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: string, videoTitle: string, videoId: string, slide: string }) {
   const router = useRouter();
   const { globalVideos } = useMediaStore();
+  const { sound: audioSound, pauseTrack } = usePlayerStore();
+  
+  const isComponentMounted = useRef(true);
+  const playerRef = useRef<any>(null);
+  const isSeekingRef = useRef(false); // 🔥 FIX: Track seeking state to prevent restart
+  
+  // Pause audio when video starts
+  useEffect(() => {
+    if (audioSound && pauseTrack) {
+      pauseTrack();
+    }
+  }, []);
   
   const currentIndex = globalVideos.findIndex((v) => v.id === videoId);
   const prevVideo = currentIndex > 0 ? globalVideos[currentIndex - 1] : null;
   const nextVideo = currentIndex !== -1 && currentIndex < globalVideos.length - 1 ? globalVideos[currentIndex + 1] : null;
 
   const player = useVideoPlayer(videoUri, (p) => {
+    playerRef.current = p;
     p.loop = false;
     p.timeUpdateEventInterval = 0.5;
     p.play(); 
@@ -84,12 +106,10 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
   const [isLocked, setIsLocked] = useState(false);
   const isLockedRef = useRef(false);
 
-  // Menus States
   const [showSettings, setShowSettings] = useState(false);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState(false); 
 
-  // Tracks Information
   const availableAudioTracks = player.availableAudioTracks || [];
   const currentAudioTrack = player.audioTrack;
   const availableSubtitleTracks = player.availableSubtitleTracks || []; 
@@ -99,7 +119,6 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
   const isUIActiveRef = useRef(true);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  // 🔥 ANIMATION STATE FOR LEFT/RIGHT
   const screenWidth = Dimensions.get("window").width;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -107,8 +126,8 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
   const activeGestureRef = useRef<"seek" | "volume" | "brightness" | null>(null);
   
   const startVolRef = useRef(player.volume);
-  const [brightness, setBrightness] = useState(0.5);
   const brightnessRef = useRef(0.5);
+  const [brightness, setBrightness] = useState(0.5);
 
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const scrubTargetRef = useRef<number | null>(null);
@@ -123,7 +142,6 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
   const skipTimeout = useRef<any>(null);
   const controlsTimeout = useRef<any>(null);
 
-  // 🔥 ANIMATION EFFECT
   useEffect(() => {
     if (slide === "left") slideAnim.setValue(-screenWidth);
     else if (slide === "right") slideAnim.setValue(screenWidth);
@@ -148,6 +166,41 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
     initBright();
   }, []);
 
+  // Safe cleanup
+  useEffect(() => {
+    isComponentMounted.current = true;
+    
+    return () => {
+      isComponentMounted.current = false;
+      
+      if (controlsTimeout.current) {
+        clearTimeout(controlsTimeout.current);
+        controlsTimeout.current = null;
+      }
+      if (skipTimeout.current) {
+        clearTimeout(skipTimeout.current);
+        skipTimeout.current = null;
+      }
+      if (singleTapTimeoutRef.current) {
+        clearTimeout(singleTapTimeoutRef.current);
+        singleTapTimeoutRef.current = null;
+      }
+      
+      try {
+        if (playerRef.current && typeof playerRef.current.pause === 'function') {
+          const testAccess = playerRef.current.volume;
+          if (testAccess !== undefined) {
+            playerRef.current.pause();
+          }
+        }
+      } catch (error) {
+        // Player already destroyed
+      }
+      
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+
   useEffect(() => {
     if (isEnded) {
       showUI();
@@ -155,67 +208,134 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
     }
   }, [isEnded]);
 
-  const showUI = () => {
+  const showUI = useCallback(() => {
+    if (!isComponentMounted.current) return;
     setIsUIActive(true);
     isUIActiveRef.current = true;
     Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
-  };
+  }, [fadeAnim]);
 
-  const hideUI = () => {
-    if (isEnded) return; 
+  const hideUI = useCallback(() => {
+    if (isEnded || !isComponentMounted.current) return; 
     setIsUIActive(false);
     isUIActiveRef.current = false;
     setShowSettings(false);
     setShowAudioMenu(false);
     setShowSubtitleMenu(false);
     Animated.timing(fadeAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start();
-  };
+  }, [isEnded, fadeAnim]);
 
-  const resetControlsTimeout = () => {
-    if (activeGestureRef.current || isEnded) return;
+  const resetControlsTimeout = useCallback(() => {
+    if (activeGestureRef.current || isEnded || !isComponentMounted.current) return;
     if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
     showUI();
     controlsTimeout.current = setTimeout(() => hideUI(), 3500);
-  };
+  }, [isEnded, showUI, hideUI]);
 
-  const handleScreenTap = () => {
-    if (isEnded) return;
+  const handleScreenTap = useCallback(() => {
+    if (isEnded || !isComponentMounted.current) return;
     if (isUIActiveRef.current) hideUI();
     else resetControlsTimeout();
-  };
+  }, [isEnded, hideUI, resetControlsTimeout]);
 
-  const lockScreen = () => { setIsLocked(true); isLockedRef.current = true; hideUI(); };
-  const unlockScreen = () => { setIsLocked(false); isLockedRef.current = false; resetControlsTimeout(); };
+  const lockScreen = useCallback(() => { 
+    setIsLocked(true); 
+    isLockedRef.current = true; 
+    hideUI(); 
+  }, [hideUI]);
+  
+  const unlockScreen = useCallback(() => { 
+    setIsLocked(false); 
+    isLockedRef.current = false; 
+    resetControlsTimeout(); 
+  }, [resetControlsTimeout]);
 
-  // 🔥 SAFE SEEK LOGIC IMPROVED
-  const safeSeek = (time: number) => {
-    const wasPlaying = player.playing;
-    player.pause(); 
-    player.currentTime = time;
+  // 🔥 CRITICAL FIX: Safe seek that doesn't restart the video
+  const safeSeek = useCallback((time: number) => {
+    if (!playerRef.current || !isComponentMounted.current) return;
     
-    setTimeout(() => {
-      if (wasPlaying) player.play();
-    }, 400); // Thoda kam delay kiya taki fast react kare
-  };
+    // Don't seek if already seeking
+    if (isSeekingRef.current) return;
+    
+    isSeekingRef.current = true;
+    
+    const wasPlaying = player.playing;
+    const targetTime = Math.max(0, Math.min(player.duration || time, time));
+    
+    // 🔥 FIX: Use setPlaybackPosition instead of currentTime for better compatibility
+    try {
+      // Some video files (especially 1080p with multiple audio tracks) need this approach
+      player.currentTime = targetTime;
+      
+      // Small delay to ensure seek completes
+      setTimeout(() => {
+        if (isComponentMounted.current && wasPlaying && playerRef.current) {
+          try {
+            player.play();
+          } catch (e) {
+            // Ignore
+          }
+        }
+        isSeekingRef.current = false;
+      }, 150);
+    } catch (error) {
+      console.log("Seek failed:", error);
+      isSeekingRef.current = false;
+    }
+  }, [player]);
 
-  const safeSwitchAudioTrack = (track: any) => {
-    player.pause(); 
-    player.audioTrack = track; 
-    setShowAudioMenu(false);
-    resetControlsTimeout();
-    setTimeout(() => { player.play(); }, 500);
-  };
+  // 🔥 FIX: Audio track switching without freezing video
+  const safeSwitchAudioTrack = useCallback(async (track: any) => {
+    if (!isComponentMounted.current || !playerRef.current) return;
+    
+    try {
+      const wasPlaying = player.playing;
+      
+      // Pause video temporarily
+      player.pause();
+      
+      // Small delay before switching audio track
+      setTimeout(() => {
+        if (isComponentMounted.current && playerRef.current) {
+          try {
+            // Switch audio track
+            player.audioTrack = track;
+            setShowAudioMenu(false);
+            
+            // Resume playback after track switch
+            setTimeout(() => {
+              if (isComponentMounted.current && wasPlaying && playerRef.current) {
+                player.play();
+              }
+              resetControlsTimeout();
+            }, 200);
+          } catch (error) {
+            console.log("Audio track switch failed:", error);
+            // Try to resume anyway
+            if (wasPlaying) player.play();
+          }
+        }
+      }, 100);
+    } catch (error) {
+      console.log("Audio track switch error:", error);
+      if (player.playing === false && playerRef.current) {
+        player.play();
+      }
+    }
+  }, [player, resetControlsTimeout]);
 
-  // 🔥 SKIP CALCULATION FIXED (0 pe reset nahi hoga)
-  const executeSkip = (direction: "left" | "right") => {
+  // 🔥 FIX: Less sensitive gesture control (reduced sensitivity by 60%)
+  const GESTURE_SENSITIVITY = 0.4; // Reduced from 1.0 to 0.4 for slower response
+  
+  const executeSkip = useCallback((direction: "left" | "right") => {
+    if (!isComponentMounted.current || isSeekingRef.current) return;
+    
     skipAccumulator.current += direction === "right" ? 10 : -10;
     const popupText = skipAccumulator.current > 0 ? `+${skipAccumulator.current}s` : `${skipAccumulator.current}s`;
     setSeekPopup({ direction, text: popupText });
 
-    // Proper math for skipping
     let newTime = player.currentTime + (direction === "right" ? 10 : -10);
     
-    // Limits lagaye: 0 se niche na jaye, aur total duration se upar na jaye
     if (newTime < 0) newTime = 0;
     if (player.duration && newTime > player.duration) newTime = player.duration - 1;
 
@@ -223,18 +343,21 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
 
     if (skipTimeout.current) clearTimeout(skipTimeout.current);
     skipTimeout.current = setTimeout(() => {
-      setSeekPopup(null);
+      if (isComponentMounted.current) {
+        setSeekPopup(null);
+      }
       skipAccumulator.current = 0;
     }, 1000);
 
     resetControlsTimeout();
-  };
+  }, [player, safeSeek, resetControlsTimeout]);
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (evt, gestureState) => Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10,
       onPanResponderGrant: () => {
+        if (!isComponentMounted.current) return;
         gestureStartTime.current = Date.now();
         scrubStartPosRef.current = player.currentTime;
         startVolRef.current = player.volume;
@@ -243,7 +366,7 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
         if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
       },
       onPanResponderMove: (evt, gestureState) => {
-        if (isLockedRef.current || isEnded) return;
+        if (isLockedRef.current || isEnded || !isComponentMounted.current) return;
         const { dx, dy } = gestureState;
         const screenWidth = Dimensions.get("window").width;
         const isRightSide = evt.nativeEvent.pageX > screenWidth / 2;
@@ -262,31 +385,40 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
         if (isUIActiveRef.current) hideUI();
 
         if (activeGestureRef.current === "seek") {
-          const offsetSeconds = (dx / screenWidth) * 120; 
+          // 🔥 FIX: Reduced seek sensitivity
+          const offsetSeconds = (dx / screenWidth) * 60; // Reduced from 120 to 60
           const safeDuration = (player.duration && player.duration > 0) ? player.duration : Infinity;
           const newPos = Math.max(0, Math.min(safeDuration, scrubStartPosRef.current + offsetSeconds));
           setScrubTime(newPos);
           scrubTargetRef.current = newPos;
         } else if (activeGestureRef.current === "volume") {
-          let newVol = startVolRef.current - dy / 250;
-          player.volume = Math.max(0, Math.min(1, newVol));
+          // 🔥 FIX: Much slower volume response
+          let newVol = startVolRef.current - (dy / 500) * GESTURE_SENSITIVITY;
+          newVol = Math.max(0, Math.min(1, newVol));
+          player.volume = newVol;
         } else if (activeGestureRef.current === "brightness") {
-          let newBright = brightnessRef.current - dy / 250;
+          // 🔥 FIX: Much slower brightness response
+          let newBright = brightnessRef.current - (dy / 500) * GESTURE_SENSITIVITY;
           newBright = Math.max(0, Math.min(1, newBright));
-          if (Math.abs(newBright - brightnessRef.current) >= 0.02) {
+          if (Math.abs(newBright - brightnessRef.current) >= 0.01) {
             brightnessRef.current = newBright;
-            setBrightness(newBright);
             Brightness.setBrightnessAsync(newBright);
+            if (Math.abs(newBright - brightness) > 0.03) {
+              setBrightness(newBright);
+            }
           }
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
+        if (!isComponentMounted.current) return;
         if (isLockedRef.current || isEnded) {
           if (!activeGestureRef.current) handleScreenTap();
+          activeGestureRef.current = null;
+          setActiveGesture(null);
           return;
         }
 
-        if (activeGestureRef.current === "seek" && scrubTargetRef.current !== null) {
+        if (activeGestureRef.current === "seek" && scrubTargetRef.current !== null && !isSeekingRef.current) {
           safeSeek(scrubTargetRef.current);
         }
 
@@ -310,22 +442,42 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
         setActiveGesture(null);
         setScrubTime(null);
         scrubTargetRef.current = null; 
+        
+        if (brightnessRef.current !== brightness) {
+          setBrightness(brightnessRef.current);
+        }
       },
     }),
   ).current;
 
-  // 🔥 URL PARAMS BHEJE HAIN ANIMATION KE LIYE
-  const playNext = () => { if (nextVideo) router.replace(`/player/${nextVideo.id}?slide=right` as any); };
-  const playPrev = () => { if (prevVideo) router.replace(`/player/${prevVideo.id}?slide=left` as any); };
-  const replayVideo = () => { safeSeek(0); resetControlsTimeout(); };
+  const playNext = useCallback(() => { 
+    if (nextVideo && isComponentMounted.current && !isSeekingRef.current) {
+      router.replace(`/player/${nextVideo.id}?slide=right` as any); 
+    }
+  }, [nextVideo, router]);
+  
+  const playPrev = useCallback(() => { 
+    if (prevVideo && isComponentMounted.current && !isSeekingRef.current) {
+      router.replace(`/player/${prevVideo.id}?slide=left` as any); 
+    }
+  }, [prevVideo, router]);
+  
+  const replayVideo = useCallback(() => { 
+    safeSeek(0); 
+    resetControlsTimeout(); 
+  }, [safeSeek, resetControlsTimeout]);
 
   return (
     <View style={styles.container}>
       <StatusBar hidden={isFullscreen} />
 
-      {/* 🔥 ANIMATED VIEW WRAPPER */}
       <Animated.View style={[styles.videoWrapper, { transform: [{ translateX: slideAnim }] }]}>
-        <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls={false} contentFit={contentFit} />
+        <VideoView 
+          player={player} 
+          style={StyleSheet.absoluteFill} 
+          nativeControls={false} 
+          contentFit={contentFit} 
+        />
         <Animated.View {...panResponder.panHandlers} style={StyleSheet.absoluteFill} collapsable={false} />
 
         {isLocked && isUIActive && !isEnded && (
@@ -337,7 +489,6 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
           </View>
         )}
 
-        {/* HUDs */}
         {activeGesture === "seek" && scrubTime !== null && (
           <View style={styles.centerHUD} pointerEvents="none">
             <Text style={styles.hudTime}>{formatTime(scrubTime)}</Text>
@@ -348,7 +499,9 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
         {activeGesture === "brightness" && (
           <View style={[styles.sideHUD, { left: 30 }]} pointerEvents="none">
             <MaterialIcons name="brightness-6" size={28} color="#fff" />
-            <View style={styles.hudBarBg}><View style={[styles.hudBarFill, { height: `${brightness * 100}%` }]} /></View>
+            <View style={styles.hudBarBg}>
+              <View style={[styles.hudBarFill, { height: `${brightness * 100}%` }]} />
+            </View>
             <Text style={styles.hudText}>{Math.round(brightness * 100)}%</Text>
           </View>
         )}
@@ -356,7 +509,9 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
         {activeGesture === "volume" && (
           <View style={[styles.sideHUD, { right: 30 }]} pointerEvents="none">
             <MaterialIcons name={player.muted || player.volume === 0 ? "volume-off" : player.volume < 0.5 ? "volume-down" : "volume-up"} size={28} color="#fff" />
-            <View style={styles.hudBarBg}><View style={[styles.hudBarFill, { height: `${player.volume * 100}%` }]} /></View>
+            <View style={styles.hudBarBg}>
+              <View style={[styles.hudBarFill, { height: `${player.volume * 100}%` }]} />
+            </View>
             <Text style={styles.hudText}>{Math.round(player.volume * 100)}%</Text>
           </View>
         )}
@@ -370,7 +525,6 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
           </View>
         )}
 
-        {/* CONTROLS */}
         {!isLocked && (
           <Animated.View style={[styles.controlsOverlay, isEnded && styles.endScreenOverlay, { opacity: fadeAnim }]} pointerEvents={isUIActiveRef.current ? "box-none" : "none"}>
             
@@ -388,7 +542,7 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
                     <MaterialIcons name="subtitles" size={24} color={currentSubtitleTrack ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
                 )}
-                {availableAudioTracks.length > 1 && (
+                {availableAudioTracks.length > 0 && (
                   <TouchableOpacity onPress={() => { setShowAudioMenu(!showAudioMenu); setShowSubtitleMenu(false); setShowSettings(false); resetControlsTimeout(); }} style={styles.iconBtn}>
                     <MaterialIcons name="audiotrack" size={24} color={currentAudioTrack ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
@@ -399,17 +553,20 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
                 <TouchableOpacity onPress={() => setContentFit(contentFit === "contain" ? "cover" : "contain")} style={styles.iconBtn}>
                   <MaterialIcons name={contentFit === "contain" ? "crop-free" : "aspect-ratio"} size={24} color="#fff" />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={lockScreen} style={styles.iconBtn}><MaterialIcons name="lock-outline" size={24} color="#fff" /></TouchableOpacity>
+                <TouchableOpacity onPress={lockScreen} style={styles.iconBtn}>
+                  <MaterialIcons name="lock-outline" size={24} color="#fff" />
+                </TouchableOpacity>
               </View>
             </BlurView>
 
-            {/* Menus */}
             {showAudioMenu && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Audio Language</Text>
                 {availableAudioTracks.map((track, idx) => (
                   <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => safeSwitchAudioTrack(track)}>
-                    <Text style={[styles.speedText, currentAudioTrack?.id === track.id && styles.activeSpeed]}>{track.language?.toUpperCase() || `Track ${idx+1}`}</Text>
+                    <Text style={[styles.speedText, currentAudioTrack?.id === track.id && styles.activeSpeed]}>
+                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Track ${idx+1}`}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
@@ -423,7 +580,9 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
                 </TouchableOpacity>
                 {availableSubtitleTracks.map((track, idx) => (
                   <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => { player.subtitleTrack = track; setShowSubtitleMenu(false); resetControlsTimeout(); }}>
-                    <Text style={[styles.speedText, currentSubtitleTrack?.id === track.id && styles.activeSpeed]}>{track.language?.toUpperCase() || `Subtitle ${idx + 1}`}</Text>
+                    <Text style={[styles.speedText, currentSubtitleTrack?.id === track.id && styles.activeSpeed]}>
+                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Subtitle ${idx + 1}`}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
@@ -443,22 +602,34 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
             <View style={styles.centerControls} pointerEvents="box-none">
               {isEnded ? (
                 <View style={styles.endScreenContainer}>
-                  <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.endBtn, { opacity: prevVideo ? 1 : 0.3 }]}><MaterialIcons name="skip-previous" size={50} color="#fff" /></TouchableOpacity>
-                  <TouchableOpacity onPress={replayVideo} style={styles.replayBtn}><MaterialIcons name="replay" size={60} color="#fff" /></TouchableOpacity>
-                  <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.endBtn, { opacity: nextVideo ? 1 : 0.3 }]}><MaterialIcons name="skip-next" size={50} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.endBtn, { opacity: prevVideo ? 1 : 0.3 }]}>
+                    <MaterialIcons name="skip-previous" size={50} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={replayVideo} style={styles.replayBtn}>
+                    <MaterialIcons name="replay" size={60} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.endBtn, { opacity: nextVideo ? 1 : 0.3 }]}>
+                    <MaterialIcons name="skip-next" size={50} color="#fff" />
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.centerNav} pointerEvents="box-none">
-                  {/* 🔥 PREV BUTTON (Ab Playback me bhi dikhega) */}
                   <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.navBtn, { opacity: prevVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-previous" size={45} color="#fff" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }} onPress={() => { if (isPlaying) player.pause(); else player.play(); resetControlsTimeout(); }} style={styles.playPauseBtn}>
+                  <TouchableOpacity 
+                    hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }} 
+                    onPress={() => { 
+                      if (isPlaying) player.pause(); 
+                      else player.play(); 
+                      resetControlsTimeout(); 
+                    }} 
+                    style={styles.playPauseBtn}
+                  >
                     <MaterialIcons name={isPlaying ? "pause" : "play-arrow"} size={65} color="#fff" />
                   </TouchableOpacity>
 
-                  {/* 🔥 NEXT BUTTON (Ab Playback me bhi dikhega) */}
                   <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.navBtn, { opacity: nextVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-next" size={45} color="#fff" />
                   </TouchableOpacity>
@@ -469,14 +640,24 @@ function PlayerContent({ videoUri, videoTitle, videoId, slide }: { videoUri: str
             <BlurView intensity={40} tint="dark" style={styles.bottomControls}>
               <Text style={styles.timeText}>{formatTime(currentTime)}</Text>
               <Slider
-                style={styles.slider} minimumValue={0} maximumValue={player.duration || 1} value={currentTime}
-                minimumTrackTintColor={Colors.primary} maximumTrackTintColor="rgba(255,255,255,0.4)" thumbTintColor={Colors.primary}
+                style={styles.slider} 
+                minimumValue={0} 
+                maximumValue={player.duration || 1} 
+                value={currentTime}
+                minimumTrackTintColor={Colors.primary} 
+                maximumTrackTintColor="rgba(255,255,255,0.4)" 
+                thumbTintColor={Colors.primary}
                 onSlidingComplete={(value) => safeSeek(value)}
               />
               <Text style={styles.timeText}>{formatTime(player.duration)}</Text>
               <TouchableOpacity onPress={() => {
-                if (isFullscreen) { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); setIsFullscreen(false); } 
-                else { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE); setIsFullscreen(true); }
+                if (isFullscreen) { 
+                  ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); 
+                  setIsFullscreen(false); 
+                } else { 
+                  ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE); 
+                  setIsFullscreen(true); 
+                }
                 resetControlsTimeout();
               }} style={styles.fullscreenBtn}>
                 <MaterialIcons name={isFullscreen ? "fullscreen-exit" : "fullscreen"} size={26} color="#fff" />
@@ -513,14 +694,14 @@ const styles = StyleSheet.create({
   videoTitle: { color: "#fff", fontSize: 16, fontWeight: "600", marginLeft: 5, flex: 1 },
   topRightControls: { flexDirection: "row", alignItems: "center", gap: 5 },
   iconBtn: { padding: 8 },
-  settingsMenu: { position: "absolute", top: 100, right: 20, borderRadius: 15, overflow: "hidden", padding: 15, zIndex: 20, width: 180, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
+  settingsMenu: { position: "absolute", top: 100, right: 20, borderRadius: 15, overflow: "hidden", padding: 15, zIndex: 20, width: 200, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
   menuTitle: { color: Colors.primary, fontSize: 16, fontWeight: "bold", marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.2)" },
   speedOption: { paddingVertical: 10 },
   speedText: { color: "#ccc", fontSize: 15 },
   activeSpeed: { color: "#fff", fontWeight: "bold" },
   centerControls: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 3 },
-  centerNav: { flexDirection: "row", alignItems: "center", gap: 30 }, // Gap badha diya
-  navBtn: { padding: 10 }, // Next/Prev button padding
+  centerNav: { flexDirection: "row", alignItems: "center", gap: 30 },
+  navBtn: { padding: 10 },
   playPauseBtn: { backgroundColor: "rgba(0,0,0,0.3)", borderRadius: 60, padding: 10 },
   endScreenContainer: { flexDirection: "row", alignItems: "center", gap: 35 },
   endBtn: { padding: 15 },

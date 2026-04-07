@@ -24,20 +24,32 @@ const VideoCard = ({
   id, title, duration, resolution, size, date, uri, onPress, onLongPress, selectionMode, isSelected,
 }: VideoCardProps) => {
   
-  // 🔥 FIX: Strict Selector. Ab ye card sirf tabhi re-render hoga jab ISKA specific like status change ho.
+  // 🔥 FIX: Optimized selectors that only trigger re-renders when this specific video's like status changes
   const liked = useMediaStore((state) => state.favorites.includes(id));
   const addFavorite = useMediaStore((state) => state.addFavorite);
   const removeFavorite = useMediaStore((state) => state.removeFavorite);
 
-  const toggleFavorite = () => {
+  const toggleFavorite = (e: any) => {
+    e.stopPropagation();
     if (liked) removeFavorite(id);
     else addFavorite(id);
   };
 
   return (
-    <TouchableOpacity style={[styles.cardContainer, isSelected && styles.selectedCard]} onPress={onPress} onLongPress={onLongPress}>
+    <TouchableOpacity 
+      style={[styles.cardContainer, isSelected && styles.selectedCard]} 
+      onPress={onPress} 
+      onLongPress={onLongPress}
+      activeOpacity={0.7}
+    >
       <View style={styles.thumbnail}>
-        <Image source={uri} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={300} />
+        <Image 
+          source={{ uri }} 
+          style={StyleSheet.absoluteFillObject} 
+          contentFit="cover" 
+          transition={200}
+          cachePolicy="memory-disk"
+        />
         <View style={styles.thumbnailOverlay}>
           {selectionMode && isSelected ? (
             <MaterialIcons name="check-circle" size={40} color={Colors.primary} />
@@ -45,7 +57,9 @@ const VideoCard = ({
             <MaterialIcons name="play-circle-outline" size={28} color="rgba(255,255,255,0.7)" />
           )}
         </View>
-        <View style={styles.durationBadge}><Text style={styles.durationText}>{formatTime(duration)}</Text></View>
+        <View style={styles.durationBadge}>
+          <Text style={styles.durationText}>{formatTime(duration)}</Text>
+        </View>
       </View>
 
       <View style={styles.detailsContainer}>
@@ -59,31 +73,107 @@ const VideoCard = ({
 
       {selectionMode ? (
         <View style={styles.optionsBtn}>
-          <MaterialIcons name={isSelected ? "check-circle" : "radio-button-unchecked"} size={26} color={isSelected ? Colors.primary : Colors.textMuted} />
+          <MaterialIcons 
+            name={isSelected ? "check-circle" : "radio-button-unchecked"} 
+            size={26} 
+            color={isSelected ? Colors.primary : Colors.textMuted} 
+          />
         </View>
       ) : (
-        <TouchableOpacity onPress={toggleFavorite} style={styles.optionsBtn}>
-          <MaterialIcons name={liked ? "favorite" : "favorite-border"} size={26} color={liked ? Colors.primary : Colors.textMuted} />
+        <TouchableOpacity onPress={toggleFavorite} style={styles.optionsBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <MaterialIcons 
+            name={liked ? "favorite" : "favorite-border"} 
+            size={26} 
+            color={liked ? Colors.primary : Colors.textMuted} 
+          />
         </TouchableOpacity>
       )}
     </TouchableOpacity>
   );
 };
 
-// 🔥 FIX: Memoizing the component so it never re-renders unless props change!
-export default memo(VideoCard);
+// Memoized with custom comparison to prevent unnecessary re-renders
+export default memo(VideoCard, (prevProps, nextProps) => {
+  return (
+    prevProps.id === nextProps.id &&
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.selectionMode === nextProps.selectionMode &&
+    prevProps.title === nextProps.title
+  );
+});
 
 const styles = StyleSheet.create({
-  cardContainer: { flexDirection: "row", backgroundColor: Colors.surface, borderRadius: 12, marginBottom: 12, padding: 8, alignItems: "center", borderWidth: 1, borderColor: Colors.border },
-  selectedCard: { borderColor: Colors.primary, backgroundColor: "rgba(229, 9, 20, 0.1)" },
-  thumbnail: { width: 120, height: 75, backgroundColor: "#111", borderRadius: 8, position: "relative", overflow: "hidden" },
-  thumbnailOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.2)", justifyContent: "center", alignItems: "center" },
-  durationBadge: { position: "absolute", bottom: 6, right: 6, backgroundColor: "rgba(0,0,0,0.8)", paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
-  durationText: { color: Colors.text, fontSize: 10, fontWeight: "bold" },
-  detailsContainer: { flex: 1, marginLeft: 12, justifyContent: "center" },
-  title: { color: Colors.text, fontSize: 15, fontWeight: "600", marginBottom: 6, lineHeight: 20 },
-  metadataRow: { flexDirection: "row", alignItems: "center" },
-  tagText: { color: Colors.textMuted, fontSize: 12, fontWeight: "500" },
-  dateText: { color: Colors.textMuted, fontSize: 11, marginTop: 4 },
-  optionsBtn: { padding: 10, justifyContent: "center", alignItems: "center" },
+  cardContainer: { 
+    flexDirection: "row", 
+    backgroundColor: Colors.surface, 
+    borderRadius: 12, 
+    marginBottom: 12, 
+    padding: 8, 
+    alignItems: "center", 
+    borderWidth: 1, 
+    borderColor: Colors.border 
+  },
+  selectedCard: { 
+    borderColor: Colors.primary, 
+    backgroundColor: "rgba(229, 9, 20, 0.1)" 
+  },
+  thumbnail: { 
+    width: 120, 
+    height: 75, 
+    backgroundColor: "#111", 
+    borderRadius: 8, 
+    position: "relative", 
+    overflow: "hidden" 
+  },
+  thumbnailOverlay: { 
+    ...StyleSheet.absoluteFillObject, 
+    backgroundColor: "rgba(0,0,0,0.2)", 
+    justifyContent: "center", 
+    alignItems: "center" 
+  },
+  durationBadge: { 
+    position: "absolute", 
+    bottom: 6, 
+    right: 6, 
+    backgroundColor: "rgba(0,0,0,0.8)", 
+    paddingHorizontal: 6, 
+    paddingVertical: 3, 
+    borderRadius: 4 
+  },
+  durationText: { 
+    color: Colors.text, 
+    fontSize: 10, 
+    fontWeight: "bold" 
+  },
+  detailsContainer: { 
+    flex: 1, 
+    marginLeft: 12, 
+    justifyContent: "center" 
+  },
+  title: { 
+    color: Colors.text, 
+    fontSize: 15, 
+    fontWeight: "600", 
+    marginBottom: 6, 
+    lineHeight: 20 
+  },
+  metadataRow: { 
+    flexDirection: "row", 
+    alignItems: "center" 
+  },
+  tagText: { 
+    color: Colors.textMuted, 
+    fontSize: 12, 
+    fontWeight: "500" 
+  },
+  dateText: { 
+    color: Colors.textMuted, 
+    fontSize: 11, 
+    marginTop: 4 
+  },
+  optionsBtn: { 
+    padding: 10, 
+    justifyContent: "center", 
+    alignItems: "center" 
+  },
 });

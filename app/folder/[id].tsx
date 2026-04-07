@@ -2,7 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -17,80 +17,85 @@ import { Colors } from "../../constants/Colors";
 import { useMediaStore } from "../../store/useMediaStore";
 
 export default function FolderScreen() {
-  const { id, title } = useLocalSearchParams(); // URL se Folder ID aur Naam nikal liya
+  const { id, title } = useLocalSearchParams();
   const router = useRouter();
-  const { removeGlobalVideos } = useMediaStore(); // Delete hone par main memory se bhi hatane ke liye
+  const { removeGlobalVideos } = useMediaStore();
 
   const [folderVideos, setFolderVideos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Multi-Select States
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // 🔥 Sirf is folder ki videos fetch karne ka logic
-  useEffect(() => {
-    const fetchFolderVideos = async () => {
-      setLoading(true);
-      try {
-        const media = await MediaLibrary.getAssetsAsync({
-          album: id as string,
-          mediaType: MediaLibrary.MediaType.video,
-          first: 100,
-          sortBy: [MediaLibrary.SortBy.creationTime], // Latest first
-        });
+  // 🔥 FIX: Non-blocking size fetching
+  const fetchFolderVideos = useCallback(async () => {
+    setLoading(true);
+    try {
+      const media = await MediaLibrary.getAssetsAsync({
+        album: id as string,
+        mediaType: MediaLibrary.MediaType.video,
+        first: 100,
+        sortBy: [MediaLibrary.SortBy.creationTime],
+      });
 
-        // Exact Size from FileSystem (0MB bug fix)
-        const detailedAssets = await Promise.all(
-          media.assets.map(async (asset) => {
-            try {
-              const fileInfo = await FileSystem.getInfoAsync(asset.uri);
-              return { ...asset, size: fileInfo.exists ? fileInfo.size : 0 };
-            } catch (e) {
-              return { ...asset, size: 0 };
-            }
-          })
-        );
+      // Set initial videos without sizes
+      const initialVideos = media.assets.map(asset => ({
+        ...asset,
+        size: 0,
+      }));
+      setFolderVideos(initialVideos);
 
-        setFolderVideos(detailedAssets);
-      } catch (error) {
-        console.error("Failed to load folder videos:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (id) fetchFolderVideos();
+      // Fetch sizes in background
+      const detailedAssets = await Promise.all(
+        media.assets.map(async (asset) => {
+          try {
+            const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+            return { ...asset, size: fileInfo.exists ? fileInfo.size : 0 };
+          } catch (e) {
+            return { ...asset, size: 0 };
+          }
+        })
+      );
+      
+      setFolderVideos(detailedAssets);
+    } catch (error) {
+      console.error("Failed to load folder videos:", error);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  // 🔥 Multi-Select Logic
-  const toggleSelection = (videoId: string) => {
-    if (selectedIds.includes(videoId)) {
-      const newSelection = selectedIds.filter((item) => item !== videoId);
-      setSelectedIds(newSelection);
-      if (newSelection.length === 0) setSelectionMode(false);
-    } else {
-      setSelectedIds([...selectedIds, videoId]);
-    }
-  };
+  useEffect(() => {
+    if (id) fetchFolderVideos();
+  }, [id, fetchFolderVideos]);
 
-  const handleCardPress = (videoId: string) => {
+  const toggleSelection = useCallback((videoId: string) => {
+    setSelectedIds((prev) => {
+      if (prev.includes(videoId)) {
+        const newSelection = prev.filter((item) => item !== videoId);
+        if (newSelection.length === 0) setSelectionMode(false);
+        return newSelection;
+      }
+      return [...prev, videoId];
+    });
+  }, []);
+
+  const handleCardPress = useCallback((videoId: string) => {
     if (selectionMode) {
       toggleSelection(videoId);
     } else {
       router.push(`/player/${videoId}` as any);
     }
-  };
+  }, [selectionMode, toggleSelection, router]);
 
-  const handleLongPress = (videoId: string) => {
+  const handleLongPress = useCallback((videoId: string) => {
     if (!selectionMode) {
       setSelectionMode(true);
       setSelectedIds([videoId]);
     }
-  };
+  }, [selectionMode]);
 
-  // 🔥 Delete Function
-  const deleteSelectedVideos = async () => {
+  const deleteSelectedVideos = useCallback(async () => {
     Alert.alert(
       "Delete Videos",
       `Are you sure you want to delete ${selectedIds.length} video(s) permanently?`,
@@ -101,16 +106,9 @@ export default function FolderScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              // 1. Phone se delete
               await MediaLibrary.deleteAssetsAsync(selectedIds);
-              
-              // 2. Local folder list se hatao
               setFolderVideos((prev) => prev.filter(v => !selectedIds.includes(v.id)));
-              
-              // 3. Global app list se hatao taaki home page par na dikhe
               removeGlobalVideos(selectedIds);
-              
-              // 4. Selection mode band
               setSelectionMode(false);
               setSelectedIds([]);
             } catch (error) {
@@ -121,27 +119,41 @@ export default function FolderScreen() {
         },
       ]
     );
-  };
+  }, [selectedIds, removeGlobalVideos]);
 
-  if (loading)
+  const renderVideoItem = useCallback(({ item }: any) => (
+    <VideoCard
+      id={item.id}
+      title={item.filename}
+      duration={item.duration}
+      resolution={`${item.width}x${item.height}`}
+      date={item.creationTime}
+      size={item.size}
+      uri={item.uri}
+      selectionMode={selectionMode}
+      isSelected={selectedIds.includes(item.id)}
+      onLongPress={() => handleLongPress(item.id)}
+      onPress={() => handleCardPress(item.id)}
+    />
+  ), [selectionMode, selectedIds, handleLongPress, handleCardPress]);
+
+  if (loading && folderVideos.length === 0) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={Colors.primary} />
       </View>
     );
+  }
 
   return (
     <View style={styles.container}>
-      {/* 🔝 HEADER */}
       <View style={styles.header}>
         {selectionMode ? (
           <View style={styles.selectionHeader}>
             <TouchableOpacity onPress={() => { setSelectionMode(false); setSelectedIds([]); }}>
               <MaterialIcons name="close" size={28} color="#fff" />
             </TouchableOpacity>
-            
             <Text style={styles.selectionText}>{selectedIds.length} Selected</Text>
-            
             <TouchableOpacity onPress={() => setSelectedIds(folderVideos.map(v => v.id))}>
               <MaterialIcons name="select-all" size={28} color="#fff" />
             </TouchableOpacity>
@@ -156,32 +168,18 @@ export default function FolderScreen() {
         )}
       </View>
 
-      {/* 📜 VIDEO LIST */}
       <FlatList
         data={folderVideos}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ paddingBottom: 130, paddingTop: 10 }}
-        renderItem={({ item }) => (
-          <VideoCard
-            id={item.id}
-            title={item.filename}
-            duration={item.duration}
-            resolution={`${item.width}x${item.height}`}
-            date={item.creationTime}
-            size={item.size}
-            uri={item.uri}
-            selectionMode={selectionMode}
-            isSelected={selectedIds.includes(item.id)}
-            onLongPress={() => handleLongPress(item.id)}
-            onPress={() => handleCardPress(item.id)}
-          />
-        )}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>This folder is empty.</Text>
-        }
+        renderItem={renderVideoItem}
+        ListEmptyComponent={<Text style={styles.emptyText}>This folder is empty.</Text>}
+        initialNumToRender={6}
+        maxToRenderPerBatch={8}
+        windowSize={3}
+        removeClippedSubviews={true}
       />
 
-      {/* 🔥 FLOATING DELETE ACTION BAR */}
       {selectionMode && selectedIds.length > 0 && (
         <View style={styles.deleteActionBar}>
           <TouchableOpacity style={styles.deleteBtn} onPress={deleteSelectedVideos}>
@@ -218,7 +216,7 @@ const styles = StyleSheet.create({
 
   deleteActionBar: {
     position: 'absolute',
-    bottom: 30, // Normal screen mein neeche rahega
+    bottom: 30,
     left: 20,
     right: 20,
     flexDirection: 'row',

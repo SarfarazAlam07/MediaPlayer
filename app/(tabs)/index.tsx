@@ -13,7 +13,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  ScrollView,
   Dimensions,
 } from "react-native";
 import FolderCard from "../../components/cards/FolderCard";
@@ -24,13 +23,120 @@ import { useMediaStore } from "../../store/useMediaStore";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
+// 🔥 FIX: Extracted Tab Views as separate components for lazy loading
+const LikedVideosTab = React.memo(({ 
+  data, 
+  selectionMode, 
+  selectedIds, 
+  onCardPress, 
+  onLongPress 
+}: any) => {
+  const renderVideoItem = useCallback(({ item }: any) => (
+    <VideoCard 
+      id={item.id} 
+      title={item.filename} 
+      duration={item.duration} 
+      resolution={`${item.width}x${item.height}`} 
+      date={item.creationTime} 
+      size={item.size} 
+      uri={item.uri} 
+      selectionMode={selectionMode} 
+      isSelected={selectedIds.includes(item.id)} 
+      onLongPress={() => onLongPress(item.id)} 
+      onPress={() => onCardPress(item.id)} 
+    />
+  ), [selectionMode, selectedIds, onLongPress, onCardPress]);
+
+  return (
+    <FlatList
+      data={data}
+      keyExtractor={(item) => item.id}
+      renderItem={renderVideoItem}
+      contentContainerStyle={{ paddingBottom: 130 }}
+      ListEmptyComponent={<Text style={styles.emptyText}>No liked videos.</Text>}
+      initialNumToRender={6}
+      maxToRenderPerBatch={8}
+      windowSize={3}
+      removeClippedSubviews={true}
+      maintainVisibleContentPosition={{
+        minIndexForVisible: 0,
+      }}
+    />
+  );
+});
+
+const AllVideosTab = React.memo(({ 
+  data, 
+  selectionMode, 
+  selectedIds, 
+  onCardPress, 
+  onLongPress 
+}: any) => {
+  const renderVideoItem = useCallback(({ item }: any) => (
+    <VideoCard 
+      id={item.id} 
+      title={item.filename} 
+      duration={item.duration} 
+      resolution={`${item.width}x${item.height}`} 
+      date={item.creationTime} 
+      size={item.size} 
+      uri={item.uri} 
+      selectionMode={selectionMode} 
+      isSelected={selectedIds.includes(item.id)} 
+      onLongPress={() => onLongPress(item.id)} 
+      onPress={() => onCardPress(item.id)} 
+    />
+  ), [selectionMode, selectedIds, onLongPress, onCardPress]);
+
+  return (
+    <FlatList
+      data={data}
+      keyExtractor={(item) => item.id}
+      renderItem={renderVideoItem}
+      contentContainerStyle={{ paddingBottom: 130 }}
+      ListEmptyComponent={<Text style={styles.emptyText}>No videos found.</Text>}
+      initialNumToRender={6}
+      maxToRenderPerBatch={8}
+      windowSize={3}
+      removeClippedSubviews={true}
+      maintainVisibleContentPosition={{
+        minIndexForVisible: 0,
+      }}
+    />
+  );
+});
+
+const FoldersTab = React.memo(({ data, onFolderPress }: any) => {
+  const renderFolderItem = useCallback(({ item }: any) => (
+    <FolderCard 
+      name={item.title} 
+      count={item.assetCount} 
+      onPress={() => onFolderPress(item.id, item.title)} 
+    />
+  ), [onFolderPress]);
+
+  return (
+    <FlatList
+      data={data}
+      keyExtractor={(item) => item.id}
+      renderItem={renderFolderItem}
+      contentContainerStyle={{ paddingBottom: 130 }}
+      ListEmptyComponent={<Text style={styles.emptyText}>No folders found.</Text>}
+      initialNumToRender={6}
+      maxToRenderPerBatch={8}
+      windowSize={3}
+      removeClippedSubviews={true}
+    />
+  );
+});
+
 export default function HomeScreen() {
-  const { folders, loading, rescan } = useMediaScanner();
+  const { folders, loading, sizeProgress } = useMediaScanner();
   const { globalVideos, setSortOrder, loadInitialData, removeGlobalVideos, favorites } = useMediaStore();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(1); 
-  const scrollViewRef = useRef<ScrollView>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const [sortVisible, setSortVisible] = useState(false);
   const router = useRouter();
@@ -41,11 +147,13 @@ export default function HomeScreen() {
   const [renameVisible, setRenameVisible] = useState(false);
   const [newName, setNewName] = useState("");
 
+  // 🔥 FIX: Load initial data once
   useEffect(() => {
-    loadInitialData();
-    setTimeout(() => {
-      scrollViewRef.current?.scrollTo({ x: SCREEN_WIDTH, animated: false });
-    }, 100);
+    const init = async () => {
+      await loadInitialData();
+      setIsInitialized(true);
+    };
+    init();
   }, []);
 
   const sortOptions = [
@@ -59,23 +167,7 @@ export default function HomeScreen() {
     await setSortOrder(val); 
   };
 
-  const handleScroll = (event: any) => {
-    const scrollPosition = event.nativeEvent.contentOffset.x;
-    const index = Math.round(scrollPosition / SCREEN_WIDTH);
-    if (activeIndex !== index) {
-      setActiveIndex(index);
-      setSearchQuery(""); 
-      setSelectionMode(false);
-      setSelectedIds([]);
-    }
-  };
-
-  const scrollToTab = (index: number) => {
-    scrollViewRef.current?.scrollTo({ x: index * SCREEN_WIDTH, animated: true });
-    setActiveIndex(index);
-  };
-
-  // 🔥 FIX: useCallback added to prevent re-creating functions on every render
+  // 🔥 FIX: useCallback to prevent re-renders
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds((prev) => {
       if (prev.includes(id)) {
@@ -99,6 +191,10 @@ export default function HomeScreen() {
     }
   }, [selectionMode]);
 
+  const handleFolderPress = useCallback((folderId: string, title: string) => {
+    router.push(`/folder/${folderId}?title=${encodeURIComponent(title)}` as any);
+  }, [router]);
+
   const deleteSelectedVideos = async () => {
     Alert.alert("Delete Videos", `Permanently delete ${selectedIds.length} video(s)?`, [
       { text: "Cancel", style: "cancel" },
@@ -107,7 +203,9 @@ export default function HomeScreen() {
             removeGlobalVideos(selectedIds);
             setSelectionMode(false);
             setSelectedIds([]);
-          } catch (error) { Alert.alert("Error", "Could not delete."); }
+          } catch (error) { 
+            Alert.alert("Error", "Could not delete."); 
+          }
         },
       },
     ]);
@@ -116,7 +214,10 @@ export default function HomeScreen() {
   const openRenameModal = () => {
     if (selectedIds.length === 1) {
       const video = globalVideos.find(v => v.id === selectedIds[0]);
-      if (video) { setNewName(video.filename || "Video"); setRenameVisible(true); }
+      if (video) { 
+        setNewName(video.filename || "Video"); 
+        setRenameVisible(true); 
+      }
     }
   };
 
@@ -133,11 +234,17 @@ export default function HomeScreen() {
         setSelectionMode(false);
         setSelectedIds([]);
         Alert.alert("Success", "Renamed successfully!");
-        rescan(); 
+        // Trigger rescan
+        const { rescan } = useMediaScanner.getState?.() || {};
+        if (rescan) rescan();
       }
-    } catch (error) { Alert.alert("Error", "OS Security blocked rename."); setRenameVisible(false); }
+    } catch (error) { 
+      Alert.alert("Error", "OS Security blocked rename."); 
+      setRenameVisible(false); 
+    }
   };
 
+  // 🔥 FIX: Memoized filtered data
   const allVideosProcessed = useMemo(() => {
     let videos = [...globalVideos];
     videos.sort((a, b) => {
@@ -160,24 +267,68 @@ export default function HomeScreen() {
     return folders.filter((f) => (f.title || "").toLowerCase().includes(searchQuery.toLowerCase()));
   }, [folders, searchQuery]);
 
-  // 🔥 FIX: Extracted Renderers for maximum Flatlist Speed
-  const renderVideoItem = useCallback(({ item }: any) => (
-    <VideoCard id={item.id} title={item.filename} duration={item.duration} resolution={`${item.width}x${item.height}`} date={item.creationTime} size={item.size} uri={item.uri} selectionMode={selectionMode} isSelected={selectedIds.includes(item.id)} onLongPress={() => handleLongPress(item.id)} onPress={() => handleCardPress(item.id)} />
-  ), [selectionMode, selectedIds, handleLongPress, handleCardPress]);
+  // 🔥 FIX: Only render the active tab to save RAM
+  const renderActiveTab = useCallback(() => {
+    switch (activeIndex) {
+      case 0:
+        return (
+          <LikedVideosTab
+            data={likedVideosFiltered}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            onCardPress={handleCardPress}
+            onLongPress={handleLongPress}
+          />
+        );
+      case 1:
+        return (
+          <AllVideosTab
+            data={allVideosProcessed}
+            selectionMode={selectionMode}
+            selectedIds={selectedIds}
+            onCardPress={handleCardPress}
+            onLongPress={handleLongPress}
+          />
+        );
+      case 2:
+        return (
+          <FoldersTab
+            data={foldersFiltered}
+            onFolderPress={handleFolderPress}
+          />
+        );
+      default:
+        return null;
+    }
+  }, [activeIndex, likedVideosFiltered, allVideosProcessed, foldersFiltered, selectionMode, selectedIds, handleCardPress, handleLongPress, handleFolderPress]);
 
-  const renderFolderItem = useCallback(({ item }: any) => (
-    <FolderCard name={item.title} count={item.assetCount} onPress={() => router.push(`/folder/${item.id}?title=${encodeURIComponent(item.title)}` as any)} />
-  ), [router]);
+  if (loading && globalVideos.length === 0) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        {sizeProgress > 0 && (
+          <Text style={styles.progressText}>Loading media: {sizeProgress}%</Text>
+        )}
+      </View>
+    );
+  }
 
-  if (loading && globalVideos.length === 0)
-    return <View style={styles.centerContainer}><ActivityIndicator size="large" color={Colors.primary} /></View>;
+  if (!isInitialized) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         {selectionMode ? (
           <View style={styles.selectionHeader}>
-            <TouchableOpacity onPress={() => { setSelectionMode(false); setSelectedIds([]); }}><MaterialIcons name="close" size={28} color="#fff" /></TouchableOpacity>
+            <TouchableOpacity onPress={() => { setSelectionMode(false); setSelectedIds([]); }}>
+              <MaterialIcons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
             <Text style={styles.selectionText}>{selectedIds.length} Selected</Text>
             <TouchableOpacity onPress={() => setSelectedIds(activeIndex === 1 ? allVideosProcessed.map(v => v.id) : likedVideosFiltered.map(v => v.id))}>
               <MaterialIcons name="select-all" size={28} color="#fff" />
@@ -208,13 +359,22 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.tabContainer}>
-              <TouchableOpacity style={[styles.tab, activeIndex === 0 && styles.activeTab]} onPress={() => scrollToTab(0)}>
+              <TouchableOpacity 
+                style={[styles.tab, activeIndex === 0 && styles.activeTab]} 
+                onPress={() => setActiveIndex(0)}
+              >
                 <Text style={[styles.tabText, activeIndex === 0 && styles.activeTabText]}>Liked</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.tab, activeIndex === 1 && styles.activeTab]} onPress={() => scrollToTab(1)}>
+              <TouchableOpacity 
+                style={[styles.tab, activeIndex === 1 && styles.activeTab]} 
+                onPress={() => setActiveIndex(1)}
+              >
                 <Text style={[styles.tabText, activeIndex === 1 && styles.activeTabText]}>All Videos</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.tab, activeIndex === 2 && styles.activeTab]} onPress={() => scrollToTab(2)}>
+              <TouchableOpacity 
+                style={[styles.tab, activeIndex === 2 && styles.activeTab]} 
+                onPress={() => setActiveIndex(2)}
+              >
                 <Text style={[styles.tabText, activeIndex === 2 && styles.activeTabText]}>Folders</Text>
               </TouchableOpacity>
             </View>
@@ -222,55 +382,10 @@ export default function HomeScreen() {
         )}
       </View>
 
-      <ScrollView ref={scrollViewRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={handleScroll} style={{ flex: 1 }} scrollEventThrottle={16}>
-        
-        {/* VIEW 0: LIKED */}
-        <View style={{ width: SCREEN_WIDTH }}>
-          <FlatList
-            data={likedVideosFiltered}
-            keyExtractor={(item) => item.id}
-            renderItem={renderVideoItem}
-            contentContainerStyle={{ paddingBottom: 130 }}
-            ListEmptyComponent={<Text style={styles.emptyText}>No liked videos.</Text>}
-            // 🔥 PERFORMANCE PROPS
-            initialNumToRender={8}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            removeClippedSubviews={true}
-          />
-        </View>
-
-        {/* VIEW 1: ALL VIDEOS */}
-        <View style={{ width: SCREEN_WIDTH }}>
-          <FlatList
-            data={allVideosProcessed}
-            keyExtractor={(item) => item.id}
-            renderItem={renderVideoItem}
-            contentContainerStyle={{ paddingBottom: 130 }}
-            ListEmptyComponent={<Text style={styles.emptyText}>No videos found.</Text>}
-            // 🔥 PERFORMANCE PROPS
-            initialNumToRender={8}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            removeClippedSubviews={true}
-          />
-        </View>
-
-        {/* VIEW 2: FOLDERS */}
-        <View style={{ width: SCREEN_WIDTH }}>
-          <FlatList
-            data={foldersFiltered}
-            keyExtractor={(item) => item.id}
-            renderItem={renderFolderItem}
-            contentContainerStyle={{ paddingBottom: 130 }}
-            ListEmptyComponent={<Text style={styles.emptyText}>No folders found.</Text>}
-            initialNumToRender={8}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            removeClippedSubviews={true}
-          />
-        </View>
-      </ScrollView>
+      {/* 🔥 FIX: Only one tab rendered at a time */}
+      <View style={{ flex: 1 }}>
+        {renderActiveTab()}
+      </View>
 
       {/* BOTTOM ACTION BAR */}
       {selectionMode && selectedIds.length > 0 && (
@@ -294,11 +409,21 @@ export default function HomeScreen() {
           <View style={styles.renameMenu} onStartShouldSetResponder={() => true}>
             <Text style={styles.menuTitle}>Rename Video</Text>
             <View style={styles.inputContainer}>
-               <TextInput style={styles.renameInput} value={newName} onChangeText={setNewName} autoFocus selectTextOnFocus />
+               <TextInput 
+                 style={styles.renameInput} 
+                 value={newName} 
+                 onChangeText={setNewName} 
+                 autoFocus 
+                 selectTextOnFocus 
+               />
             </View>
             <View style={styles.renameBtnRow}>
-               <TouchableOpacity style={styles.cancelBtn} onPress={() => setRenameVisible(false)}><Text style={styles.cancelBtnText}>Cancel</Text></TouchableOpacity>
-               <TouchableOpacity style={styles.confirmBtn} onPress={handleRename}><Text style={styles.confirmBtnText}>Save</Text></TouchableOpacity>
+               <TouchableOpacity style={styles.cancelBtn} onPress={() => setRenameVisible(false)}>
+                 <Text style={styles.cancelBtnText}>Cancel</Text>
+               </TouchableOpacity>
+               <TouchableOpacity style={styles.confirmBtn} onPress={handleRename}>
+                 <Text style={styles.confirmBtnText}>Save</Text>
+               </TouchableOpacity>
             </View>
           </View>
         </Pressable>
@@ -324,6 +449,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   centerContainer: { flex: 1, backgroundColor: Colors.background, justifyContent: "center", alignItems: "center" },
+  progressText: { color: Colors.textMuted, marginTop: 10, fontSize: 14 },
   header: { paddingHorizontal: 20, paddingTop: 50, paddingBottom: 10, backgroundColor: Colors.surface, borderBottomLeftRadius: 20, borderBottomRightRadius: 20, elevation: 5 },
   headerTitle: { color: Colors.primary, fontSize: 24, fontWeight: "bold", marginBottom: 15 },
 

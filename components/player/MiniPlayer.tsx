@@ -1,19 +1,25 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
-// 🔥 Use the '@' alias for clean, bulletproof imports!
 import { usePlayerStore } from '@/store/usePlayerStore'; 
 import { Colors } from '@/constants/Colors';
 
 export default function MiniPlayer() {
   const { currentTrack, isPlaying, togglePlayback } = usePlayerStore();
+  const router = useRouter();
 
-  // Agar koi gaana nahi chal raha, toh player chup rahega (hide)
+  // Agar koi gaana nahi chal raha, toh player chup rahega
   if (!currentTrack) return null;
 
+  const navigateToAudioPlayer = () => {
+    // Navigate to full audio player screen (to be implemented)
+    router.push('/(tabs)/audio');
+  };
+
   return (
-    <View style={styles.container}>
+    <TouchableOpacity style={styles.container} onPress={navigateToAudioPlayer} activeOpacity={0.9}>
       <View style={styles.iconBox}>
         <MaterialIcons name="library-music" size={28} color={Colors.text} />
       </View>
@@ -23,10 +29,16 @@ export default function MiniPlayer() {
         <Text style={styles.subtitle}>Playing from Library</Text>
       </View>
 
-      <TouchableOpacity onPress={() => togglePlayback()} style={styles.playBtn}>
+      <TouchableOpacity 
+        onPress={(e) => {
+          e.stopPropagation();
+          togglePlayback();
+        }} 
+        style={styles.playBtn}
+      >
         <MaterialIcons name={isPlaying ? "pause" : "play-arrow"} size={32} color={Colors.text} />
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -46,6 +58,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
+    zIndex: 100,
   },
   iconBox: {
     width: 45,
