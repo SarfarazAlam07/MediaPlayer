@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "hybridplayer",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true, 
+    "newArchEnabled": true,
     "android": {
       "package": "com.sarfarazalam.hybridplayer",
       "permissions": [
@@ -20,7 +20,8 @@
     "plugins": [
       "expo-router",
       "expo-media-library",
-      "expo-navigation-bar"
+      "expo-navigation-bar",
+      "expo-video"
     ],
     "extra": {
       "eas": {

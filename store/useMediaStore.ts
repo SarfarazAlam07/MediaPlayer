@@ -5,13 +5,12 @@ import { create } from "zustand";
 interface MediaState {
   favorites: string[];
   globalVideos: MediaLibrary.Asset[];
-  sortOrder: MediaLibrary.SortBy | any;
+  sortOrder: MediaLibrary.SortBy | string;
 
   setGlobalVideos: (videos: MediaLibrary.Asset[]) => void;
-  // 🔥 NAYA: UI se deleted videos ko turant hatane ke liye
   removeGlobalVideos: (ids: string[]) => void;
 
-  setSortOrder: (order: any) => Promise<void>;
+  setSortOrder: (order: string) => Promise<void>;
   addFavorite: (id: string) => Promise<void>;
   removeFavorite: (id: string) => Promise<void>;
   isFavorite: (id: string) => boolean;
@@ -21,21 +20,43 @@ interface MediaState {
 export const useMediaStore = create<MediaState>((set, get) => ({
   favorites: [],
   globalVideos: [],
-  sortOrder: MediaLibrary.SortBy.creationTime,
+  sortOrder: 'creationTime', // Default custom string
 
-  setGlobalVideos: (videos) => set({ globalVideos: videos }),
+  setGlobalVideos: (videos) => {
+    // Apply current sort immediately when setting videos
+    const currentSort = get().sortOrder;
+    let sorted = [...videos];
+    
+    if (currentSort === 'duration') {
+      sorted.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    } else if (currentSort === 'default') { // Alphabetical
+      sorted.sort((a, b) => (a.filename || "").localeCompare(b.filename || ""));
+    } else { // creationTime
+      sorted.sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0));
+    }
+    
+    set({ globalVideos: sorted });
+  },
 
-  // 🔥 NAYA: Filter karke deleted items ko hata do (Zero Lag)
   removeGlobalVideos: (ids) => {
     set((state) => ({
-      globalVideos: state.globalVideos.filter(
-        (video) => !ids.includes(video.id),
-      ),
+      globalVideos: state.globalVideos.filter((video) => !ids.includes(video.id)),
     }));
   },
 
+  // 🔥 INSTANT IN-MEMORY SORTING
   setSortOrder: async (order) => {
-    set({ sortOrder: order });
+    const currentVideos = [...get().globalVideos];
+    
+    if (order === 'duration') {
+      currentVideos.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    } else if (order === 'default') {
+      currentVideos.sort((a, b) => (a.filename || "").localeCompare(b.filename || ""));
+    } else { // creationTime
+      currentVideos.sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0));
+    }
+
+    set({ sortOrder: order, globalVideos: currentVideos });
     await AsyncStorage.setItem("@sortOrder", order);
   },
 
