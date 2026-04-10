@@ -1,30 +1,36 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Colors } from '../constants/Colors'; // Hamari premium theme
+import { Colors } from '../constants/Colors';
 
 export default function RootLayout() {
   return (
     <>
-      {/* 🌙 Poori app mein upar network/battery ka color white rahega */}
       <StatusBar style="light" backgroundColor={Colors.background} />
       
-      {/* 🛣️ App ka main navigation (Nakshe ki root) */}
       <Stack 
         screenOptions={{ 
-          headerShown: false, // Default ugly headers band
-          contentStyle: { backgroundColor: Colors.background } // Background hamesha dark
+          headerShown: false,
+          contentStyle: { backgroundColor: Colors.background }
         }}
       >
-        {/* Pehla padaw: Hamare Tabs (Home aur Music) */}
         <Stack.Screen name="(tabs)" />
         
-        {/* Doosra padaw: Hamara Fullscreen Player */}
         <Stack.Screen 
           name="player/[id]" 
           options={{ 
-            presentation: 'fullScreenModal', // Player ekdum smooth popup ki tarah khulega
+            presentation: 'fullScreenModal',
             animation: 'slide_from_bottom' 
+          }} 
+        />
+        
+        {/* 🔥 NEW: FFMPEG Fix Screen */}
+        <Stack.Screen 
+          name="player/fix/[id]" 
+          options={{ 
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
+            headerShown: false
           }} 
         />
       </Stack>
