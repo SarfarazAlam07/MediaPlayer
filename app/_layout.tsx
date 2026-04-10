@@ -24,15 +24,15 @@ export default function RootLayout() {
           }} 
         />
         
-        {/* 🔥 NEW: FFMPEG Fix Screen */}
-        <Stack.Screen 
+        {/* 🔥 REMOVED: FFMPEG Fix Screen - File doesn't exist */}
+        {/* <Stack.Screen 
           name="player/fix/[id]" 
           options={{ 
             presentation: 'modal',
             animation: 'slide_from_bottom',
             headerShown: false
           }} 
-        />
+        /> */}
       </Stack>
     </>
   );

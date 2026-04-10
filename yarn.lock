@@ -3610,10 +3610,10 @@ expo-updates-interface@~2.0.0:
   resolved "https://registry.npmjs.org/expo-updates-interface/-/expo-updates-interface-2.0.0.tgz"
   integrity sha512-pTzAIufEZdVPKql6iMi5ylVSPqV1qbEopz9G6TSECQmnNde2nwq42PxdFBaUEd8IZJ/fdJLQnOT3m6+XJ5s7jg==
 
-expo-video@~3.0.16:
-  version "3.0.16"
-  resolved "https://registry.npmjs.org/expo-video/-/expo-video-3.0.16.tgz"
-  integrity sha512-H1HlxcHGomZItqisGfW3YL/G9BHtNBfVSimDJcLuyxyU87wFnV8loO9tCjuhufkfh/aTa2sW5BYAjLjg9DvnBQ==
+expo-video@^3.0.8:
+  version "3.0.8"
+  resolved "https://registry.npmjs.org/expo-video/-/expo-video-3.0.8.tgz"
+  integrity sha512-70vOuG17APXHHN39ATqHB0qTaRWyVAmb+FF9KzA2uzF2BvYmQD0/BMwwfAXJw3Xkz/sqh4gVhY/haeCjMbYv6w==
 
 expo-web-browser@~15.0.10:
   version "15.0.10"

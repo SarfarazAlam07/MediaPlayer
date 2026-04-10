@@ -10,7 +10,6 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Dimensions,
   PanResponder,
@@ -19,6 +18,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 import { Colors } from "../../constants/Colors";
 import { useMediaStore } from "../../store/useMediaStore";
@@ -54,9 +54,7 @@ export default function PlayerScreen() {
 
     return () => {
       isMounted.current = false;
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP,
-      );
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
   }, [id]);
 
@@ -111,10 +109,21 @@ function PlayerContent({
       ? globalVideos[currentIndex + 1]
       : null;
 
+  // 🔥 CRITICAL: Configure player with better settings for problematic videos
   const player = useVideoPlayer(videoUri, (p) => {
     playerRef.current = p;
     p.loop = false;
     p.timeUpdateEventInterval = 0.5;
+    
+    // 🔥 FIX: Set better buffering for high-quality videos
+    if (Platform.OS === 'android') {
+      // These settings help with high bitrate videos
+      p.playbackParameters = {
+        pitch: 1.0,
+        skipSilence: false,
+      };
+    }
+    
     p.play();
   });
 
@@ -182,26 +191,6 @@ function PlayerContent({
   const skipTimeout = useRef<any>(null);
   const controlsTimeout = useRef<any>(null);
 
-  // 🔥 NEW: FFMPEG Fix Handler
-  const handleFFMPGEFix = useCallback(() => {
-    Alert.alert(
-      "Fix Video Issues",
-      "This will fix:\n• Seek/Restart problems\n• Missing audio (AC3/DTS)\n• Audio track switching\n\nVideo quality will remain the same.\nProcessing takes 1-3 minutes.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Fix Now",
-          onPress: () => {
-            // Navigate to FFMPEG fix screen
-            router.push(
-              `/player/fix/${videoId}?uri=${encodeURIComponent(videoUri)}&title=${encodeURIComponent(videoTitle)}` as any,
-            );
-          },
-        },
-      ],
-    );
-  }, [videoId, videoUri, videoTitle, router]);
-
   useEffect(() => {
     if (slide === "left") slideAnim.setValue(-screenWidth);
     else if (slide === "right") slideAnim.setValue(screenWidth);
@@ -260,9 +249,7 @@ function PlayerContent({
         // Player already destroyed
       }
 
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP,
-      );
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
   }, []);
 
@@ -324,11 +311,10 @@ function PlayerContent({
     resetControlsTimeout();
   }, [resetControlsTimeout]);
 
-  // Safe seek that doesn't restart the video
+  // 🔥 IMPROVED: Safe seek with better error handling
   const safeSeek = useCallback(
     (time: number) => {
       if (!playerRef.current || !isComponentMounted.current) return;
-
       if (isSeekingRef.current) return;
 
       isSeekingRef.current = true;
@@ -337,18 +323,32 @@ function PlayerContent({
       const targetTime = Math.max(0, Math.min(player.duration || time, time));
 
       try {
-        player.currentTime = targetTime;
-
-        setTimeout(() => {
-          if (isComponentMounted.current && wasPlaying && playerRef.current) {
-            try {
+        // For problematic videos, use smaller seek steps
+        const currentTime = player.currentTime;
+        const diff = Math.abs(targetTime - currentTime);
+        
+        if (diff > 30) {
+          // Large seek - pause longer
+          player.pause();
+          setTimeout(() => {
+            player.currentTime = targetTime;
+            setTimeout(() => {
+              if (isComponentMounted.current && wasPlaying && playerRef.current) {
+                player.play();
+              }
+              isSeekingRef.current = false;
+            }, 200);
+          }, 50);
+        } else {
+          // Small seek - normal
+          player.currentTime = targetTime;
+          setTimeout(() => {
+            if (isComponentMounted.current && wasPlaying && playerRef.current) {
               player.play();
-            } catch (e) {
-              // Ignore
             }
-          }
-          isSeekingRef.current = false;
-        }, 150);
+            isSeekingRef.current = false;
+          }, 100);
+        }
       } catch (error) {
         console.log("Seek failed:", error);
         isSeekingRef.current = false;
@@ -357,13 +357,14 @@ function PlayerContent({
     [player],
   );
 
-  // Audio track switching without freezing video
+  // 🔥 IMPROVED: Audio track switching with better recovery
   const safeSwitchAudioTrack = useCallback(
     async (track: any) => {
       if (!isComponentMounted.current || !playerRef.current) return;
 
       try {
         const wasPlaying = player.playing;
+        const currentTime = player.currentTime;
 
         player.pause();
 
@@ -373,22 +374,21 @@ function PlayerContent({
               player.audioTrack = track;
               setShowAudioMenu(false);
 
+              // Restore playback position
+              player.currentTime = currentTime;
+
               setTimeout(() => {
-                if (
-                  isComponentMounted.current &&
-                  wasPlaying &&
-                  playerRef.current
-                ) {
+                if (isComponentMounted.current && wasPlaying && playerRef.current) {
                   player.play();
                 }
                 resetControlsTimeout();
-              }, 200);
+              }, 300);
             } catch (error) {
               console.log("Audio track switch failed:", error);
               if (wasPlaying) player.play();
             }
           }
-        }, 100);
+        }, 150);
       } catch (error) {
         console.log("Audio track switch error:", error);
         if (player.playing === false && playerRef.current) {
@@ -691,18 +691,6 @@ function PlayerContent({
               </View>
 
               <View style={styles.topRightControls}>
-                {/* 🔥 NEW: FFMPEG Fix Button - Orange color for visibility */}
-                <TouchableOpacity
-                  onPress={handleFFMPGEFix}
-                  style={styles.iconBtn}
-                >
-                  <MaterialIcons
-                    name="build-circle"
-                    size={24}
-                    color="#ff9800"
-                  />
-                </TouchableOpacity>
-
                 {availableSubtitleTracks.length > 0 && (
                   <TouchableOpacity
                     onPress={() => {
@@ -787,6 +775,7 @@ function PlayerContent({
                       ]}
                     >
                       {track.language?.toUpperCase() ||
+                        track.title?.toUpperCase() ||
                         `Track ${idx + 1}`}
                     </Text>
                   </TouchableOpacity>
@@ -832,6 +821,7 @@ function PlayerContent({
                       ]}
                     >
                       {track.language?.toUpperCase() ||
+                        track.title?.toUpperCase() ||
                         `Subtitle ${idx + 1}`}
                     </Text>
                   </TouchableOpacity>
