@@ -1,12 +1,10 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import Slider from "@react-native-community/slider";
-import { useEvent } from "expo";
 import { BlurView } from "expo-blur";
 import * as Brightness from "expo-brightness";
 import * as MediaLibrary from "expo-media-library";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ScreenOrientation from "expo-screen-orientation";
-import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,10 +18,13 @@ import {
   View,
   Platform,
 } from "react-native";
+import Video from "react-native-video";
 import { Colors } from "../../constants/Colors";
 import { useMediaStore } from "../../store/useMediaStore";
 import { usePlayerStore } from "../../store/usePlayerStore";
 import { formatTime } from "../../utils/timeFormat";
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function PlayerScreen() {
   const { id, slide } = useLocalSearchParams();
@@ -92,8 +93,20 @@ function PlayerContent({
   const { sound: audioSound, pauseTrack } = usePlayerStore();
 
   const isComponentMounted = useRef(true);
-  const playerRef = useRef<any>(null);
+  const videoRef = useRef<any>(null);
   const isSeekingRef = useRef(false);
+
+  // Video state
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<any>(null);
+  const [availableAudioTracks, setAvailableAudioTracks] = useState<any[]>([]);
+  const [selectedTextTrack, setSelectedTextTrack] = useState<any>(null);
+  const [availableTextTracks, setAvailableTextTracks] = useState<any[]>([]);
 
   // Pause audio when video starts
   useEffect(() => {
@@ -109,40 +122,10 @@ function PlayerContent({
       ? globalVideos[currentIndex + 1]
       : null;
 
-  // 🔥 CRITICAL: Configure player with better settings for problematic videos
-  const player = useVideoPlayer(videoUri, (p) => {
-    playerRef.current = p;
-    p.loop = false;
-    p.timeUpdateEventInterval = 0.5;
-    
-    // 🔥 FIX: Set better buffering for high-quality videos
-    if (Platform.OS === 'android') {
-      // These settings help with high bitrate videos
-      p.playbackParameters = {
-        pitch: 1.0,
-        skipSilence: false,
-      };
-    }
-    
-    p.play();
-  });
-
-  const { isPlaying } = useEvent(player, "playingChange", {
-    isPlaying: player.playing,
-  });
-  const timeUpdateEvent = useEvent(player, "timeUpdate", {
-    currentTime: player.currentTime,
-    currentLiveTimestamp: null,
-    currentOffsetFromLive: 0,
-    bufferedPosition: 0,
-  });
-  const currentTime = timeUpdateEvent?.currentTime ?? player.currentTime;
-
-  const isEnded =
-    player.duration > 0 && currentTime >= player.duration - 0.5 && !isPlaying;
+  const isEnded = duration > 0 && currentTime >= duration - 0.5 && !isPlaying;
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [contentFit, setContentFit] = useState<"contain" | "cover" | "fill">(
+  const [contentFit, setContentFit] = useState<"contain" | "cover" | "stretch">(
     "contain",
   );
   const [isLocked, setIsLocked] = useState(false);
@@ -152,16 +135,10 @@ function PlayerContent({
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
 
-  const availableAudioTracks = player.availableAudioTracks || [];
-  const currentAudioTrack = player.audioTrack;
-  const availableSubtitleTracks = player.availableSubtitleTracks || [];
-  const currentSubtitleTrack = player.subtitleTrack;
-
   const [isUIActive, setIsUIActive] = useState(true);
   const isUIActiveRef = useRef(true);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  const screenWidth = Dimensions.get("window").width;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
   const [activeGesture, setActiveGesture] = useState<
@@ -171,7 +148,7 @@ function PlayerContent({
     null,
   );
 
-  const startVolRef = useRef(player.volume);
+  const startVolRef = useRef(volume);
   const brightnessRef = useRef(0.5);
   const [brightness, setBrightness] = useState(0.5);
 
@@ -191,9 +168,10 @@ function PlayerContent({
   const skipTimeout = useRef<any>(null);
   const controlsTimeout = useRef<any>(null);
 
+  // Animation effect
   useEffect(() => {
-    if (slide === "left") slideAnim.setValue(-screenWidth);
-    else if (slide === "right") slideAnim.setValue(screenWidth);
+    if (slide === "left") slideAnim.setValue(-SCREEN_WIDTH);
+    else if (slide === "right") slideAnim.setValue(SCREEN_WIDTH);
     else slideAnim.setValue(0);
 
     Animated.timing(slideAnim, {
@@ -203,6 +181,7 @@ function PlayerContent({
     }).start();
   }, [videoId, slide]);
 
+  // Brightness init
   useEffect(() => {
     const initBright = async () => {
       const { status } = await Brightness.requestPermissionsAsync();
@@ -215,39 +194,16 @@ function PlayerContent({
     initBright();
   }, []);
 
-  // Safe cleanup
+  // Cleanup
   useEffect(() => {
     isComponentMounted.current = true;
 
     return () => {
       isComponentMounted.current = false;
 
-      if (controlsTimeout.current) {
-        clearTimeout(controlsTimeout.current);
-        controlsTimeout.current = null;
-      }
-      if (skipTimeout.current) {
-        clearTimeout(skipTimeout.current);
-        skipTimeout.current = null;
-      }
-      if (singleTapTimeoutRef.current) {
-        clearTimeout(singleTapTimeoutRef.current);
-        singleTapTimeoutRef.current = null;
-      }
-
-      try {
-        if (
-          playerRef.current &&
-          typeof playerRef.current.pause === "function"
-        ) {
-          const testAccess = playerRef.current.volume;
-          if (testAccess !== undefined) {
-            playerRef.current.pause();
-          }
-        }
-      } catch (error) {
-        // Player already destroyed
-      }
+      if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+      if (skipTimeout.current) clearTimeout(skipTimeout.current);
+      if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
 
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
@@ -264,11 +220,7 @@ function PlayerContent({
     if (!isComponentMounted.current) return;
     setIsUIActive(true);
     isUIActiveRef.current = true;
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: true }).start();
   }, [fadeAnim]);
 
   const hideUI = useCallback(() => {
@@ -278,16 +230,11 @@ function PlayerContent({
     setShowSettings(false);
     setShowAudioMenu(false);
     setShowSubtitleMenu(false);
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start();
   }, [isEnded, fadeAnim]);
 
   const resetControlsTimeout = useCallback(() => {
-    if (activeGestureRef.current || isEnded || !isComponentMounted.current)
-      return;
+    if (activeGestureRef.current || isEnded || !isComponentMounted.current) return;
     if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
     showUI();
     controlsTimeout.current = setTimeout(() => hideUI(), 3500);
@@ -311,129 +258,51 @@ function PlayerContent({
     resetControlsTimeout();
   }, [resetControlsTimeout]);
 
-  // 🔥 IMPROVED: Safe seek with better error handling
-  const safeSeek = useCallback(
-    (time: number) => {
-      if (!playerRef.current || !isComponentMounted.current) return;
-      if (isSeekingRef.current) return;
+  // Safe seek
+  const safeSeek = useCallback((time: number) => {
+    if (!videoRef.current || !isComponentMounted.current) return;
+    if (isSeekingRef.current) return;
 
-      isSeekingRef.current = true;
+    isSeekingRef.current = true;
+    const targetTime = Math.max(0, Math.min(duration || time, time));
 
-      const wasPlaying = player.playing;
-      const targetTime = Math.max(0, Math.min(player.duration || time, time));
+    videoRef.current.seek(targetTime);
 
-      try {
-        // For problematic videos, use smaller seek steps
-        const currentTime = player.currentTime;
-        const diff = Math.abs(targetTime - currentTime);
-        
-        if (diff > 30) {
-          // Large seek - pause longer
-          player.pause();
-          setTimeout(() => {
-            player.currentTime = targetTime;
-            setTimeout(() => {
-              if (isComponentMounted.current && wasPlaying && playerRef.current) {
-                player.play();
-              }
-              isSeekingRef.current = false;
-            }, 200);
-          }, 50);
-        } else {
-          // Small seek - normal
-          player.currentTime = targetTime;
-          setTimeout(() => {
-            if (isComponentMounted.current && wasPlaying && playerRef.current) {
-              player.play();
-            }
-            isSeekingRef.current = false;
-          }, 100);
-        }
-      } catch (error) {
-        console.log("Seek failed:", error);
-        isSeekingRef.current = false;
-      }
-    },
-    [player],
-  );
+    setTimeout(() => {
+      isSeekingRef.current = false;
+    }, 100);
+  }, [duration]);
 
-  // 🔥 IMPROVED: Audio track switching with better recovery
-  const safeSwitchAudioTrack = useCallback(
-    async (track: any) => {
-      if (!isComponentMounted.current || !playerRef.current) return;
-
-      try {
-        const wasPlaying = player.playing;
-        const currentTime = player.currentTime;
-
-        player.pause();
-
-        setTimeout(() => {
-          if (isComponentMounted.current && playerRef.current) {
-            try {
-              player.audioTrack = track;
-              setShowAudioMenu(false);
-
-              // Restore playback position
-              player.currentTime = currentTime;
-
-              setTimeout(() => {
-                if (isComponentMounted.current && wasPlaying && playerRef.current) {
-                  player.play();
-                }
-                resetControlsTimeout();
-              }, 300);
-            } catch (error) {
-              console.log("Audio track switch failed:", error);
-              if (wasPlaying) player.play();
-            }
-          }
-        }, 150);
-      } catch (error) {
-        console.log("Audio track switch error:", error);
-        if (player.playing === false && playerRef.current) {
-          player.play();
-        }
-      }
-    },
-    [player, resetControlsTimeout],
-  );
-
-  // Less sensitive gesture control
+  // Gesture sensitivity
   const GESTURE_SENSITIVITY = 0.4;
 
-  const executeSkip = useCallback(
-    (direction: "left" | "right") => {
-      if (!isComponentMounted.current || isSeekingRef.current) return;
+  const executeSkip = useCallback((direction: "left" | "right") => {
+    if (!isComponentMounted.current || isSeekingRef.current) return;
 
-      skipAccumulator.current += direction === "right" ? 10 : -10;
-      const popupText =
-        skipAccumulator.current > 0
-          ? `+${skipAccumulator.current}s`
-          : `${skipAccumulator.current}s`;
-      setSeekPopup({ direction, text: popupText });
+    skipAccumulator.current += direction === "right" ? 10 : -10;
+    const popupText =
+      skipAccumulator.current > 0
+        ? `+${skipAccumulator.current}s`
+        : `${skipAccumulator.current}s`;
+    setSeekPopup({ direction, text: popupText });
 
-      let newTime = player.currentTime + (direction === "right" ? 10 : -10);
+    let newTime = currentTime + (direction === "right" ? 10 : -10);
 
-      if (newTime < 0) newTime = 0;
-      if (player.duration && newTime > player.duration)
-        newTime = player.duration - 1;
+    if (newTime < 0) newTime = 0;
+    if (duration && newTime > duration) newTime = duration - 1;
 
-      safeSeek(newTime);
+    safeSeek(newTime);
 
-      if (skipTimeout.current) clearTimeout(skipTimeout.current);
-      skipTimeout.current = setTimeout(() => {
-        if (isComponentMounted.current) {
-          setSeekPopup(null);
-        }
-        skipAccumulator.current = 0;
-      }, 1000);
+    if (skipTimeout.current) clearTimeout(skipTimeout.current);
+    skipTimeout.current = setTimeout(() => {
+      if (isComponentMounted.current) setSeekPopup(null);
+      skipAccumulator.current = 0;
+    }, 1000);
 
-      resetControlsTimeout();
-    },
-    [player, safeSeek, resetControlsTimeout],
-  );
+    resetControlsTimeout();
+  }, [currentTime, duration, safeSeek, resetControlsTimeout]);
 
+  // PanResponder
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -442,18 +311,16 @@ function PlayerContent({
       onPanResponderGrant: () => {
         if (!isComponentMounted.current) return;
         gestureStartTime.current = Date.now();
-        scrubStartPosRef.current = player.currentTime;
-        startVolRef.current = player.volume;
+        scrubStartPosRef.current = currentTime;
+        startVolRef.current = volume;
         activeGestureRef.current = null;
         setActiveGesture(null);
         if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
       },
       onPanResponderMove: (evt, gestureState) => {
-        if (isLockedRef.current || isEnded || !isComponentMounted.current)
-          return;
+        if (isLockedRef.current || isEnded || !isComponentMounted.current) return;
         const { dx, dy } = gestureState;
-        const screenWidth = Dimensions.get("window").width;
-        const isRightSide = evt.nativeEvent.pageX > screenWidth / 2;
+        const isRightSide = evt.nativeEvent.pageX > SCREEN_WIDTH / 2;
 
         if (!activeGestureRef.current) {
           if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 15) {
@@ -469,29 +336,21 @@ function PlayerContent({
         if (isUIActiveRef.current) hideUI();
 
         if (activeGestureRef.current === "seek") {
-          const offsetSeconds = (dx / screenWidth) * 60;
-          const safeDuration =
-            player.duration && player.duration > 0 ? player.duration : Infinity;
-          const newPos = Math.max(
-            0,
-            Math.min(safeDuration, scrubStartPosRef.current + offsetSeconds),
-          );
+          const offsetSeconds = (dx / SCREEN_WIDTH) * 60;
+          const newPos = Math.max(0, Math.min(duration || Infinity, scrubStartPosRef.current + offsetSeconds));
           setScrubTime(newPos);
           scrubTargetRef.current = newPos;
         } else if (activeGestureRef.current === "volume") {
           let newVol = startVolRef.current - (dy / 500) * GESTURE_SENSITIVITY;
           newVol = Math.max(0, Math.min(1, newVol));
-          player.volume = newVol;
+          setVolume(newVol);
         } else if (activeGestureRef.current === "brightness") {
-          let newBright =
-            brightnessRef.current - (dy / 500) * GESTURE_SENSITIVITY;
+          let newBright = brightnessRef.current - (dy / 500) * GESTURE_SENSITIVITY;
           newBright = Math.max(0, Math.min(1, newBright));
           if (Math.abs(newBright - brightnessRef.current) >= 0.01) {
             brightnessRef.current = newBright;
             Brightness.setBrightnessAsync(newBright);
-            if (Math.abs(newBright - brightness) > 0.03) {
-              setBrightness(newBright);
-            }
+            if (Math.abs(newBright - brightness) > 0.03) setBrightness(newBright);
           }
         }
       },
@@ -504,34 +363,24 @@ function PlayerContent({
           return;
         }
 
-        if (
-          activeGestureRef.current === "seek" &&
-          scrubTargetRef.current !== null &&
-          !isSeekingRef.current
-        ) {
+        if (activeGestureRef.current === "seek" && scrubTargetRef.current !== null && !isSeekingRef.current) {
           safeSeek(scrubTargetRef.current);
         }
 
         if (!activeGestureRef.current) {
           const now = Date.now();
-          const screenWidth = Dimensions.get("window").width;
           if (
             now - gestureStartTime.current < 400 &&
             Math.sqrt(gestureState.dx ** 2 + gestureState.dy ** 2) < 20
           ) {
             if (now - lastTapTimeRef.current < 300) {
-              if (singleTapTimeoutRef.current)
-                clearTimeout(singleTapTimeoutRef.current);
+              if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
               lastTapTimeRef.current = 0;
-              if (evt.nativeEvent.pageX < screenWidth / 3) executeSkip("left");
-              else if (evt.nativeEvent.pageX > (screenWidth * 2) / 3)
-                executeSkip("right");
+              if (evt.nativeEvent.pageX < SCREEN_WIDTH / 3) executeSkip("left");
+              else if (evt.nativeEvent.pageX > (SCREEN_WIDTH * 2) / 3) executeSkip("right");
             } else {
               lastTapTimeRef.current = now;
-              singleTapTimeoutRef.current = setTimeout(
-                () => handleScreenTap(),
-                250,
-              );
+              singleTapTimeoutRef.current = setTimeout(() => handleScreenTap(), 250);
             }
           }
         }
@@ -541,21 +390,52 @@ function PlayerContent({
         setScrubTime(null);
         scrubTargetRef.current = null;
 
-        if (brightnessRef.current !== brightness) {
-          setBrightness(brightnessRef.current);
-        }
+        if (brightnessRef.current !== brightness) setBrightness(brightnessRef.current);
       },
     }),
   ).current;
 
+  // Video event handlers
+  const onLoad = useCallback((data: any) => {
+    setDuration(data.duration);
+    setAvailableAudioTracks(data.audioTracks || []);
+    setAvailableTextTracks(data.textTracks || []);
+    if (data.audioTracks?.length > 0) {
+      setSelectedAudioTrack(data.audioTracks[0]);
+    }
+    resetControlsTimeout();
+  }, []);
+
+  const onProgress = useCallback((data: any) => {
+    if (!isSeekingRef.current) {
+      setCurrentTime(data.currentTime);
+    }
+  }, []);
+
+  const onEnd = useCallback(() => {
+    setIsPlaying(false);
+  }, []);
+
+  const onAudioTrackChange = useCallback((track: any) => {
+    setSelectedAudioTrack(track);
+    setShowAudioMenu(false);
+    resetControlsTimeout();
+  }, []);
+
+  const onTextTrackChange = useCallback((track: any) => {
+    setSelectedTextTrack(track);
+    setShowSubtitleMenu(false);
+    resetControlsTimeout();
+  }, []);
+
   const playNext = useCallback(() => {
-    if (nextVideo && isComponentMounted.current && !isSeekingRef.current) {
+    if (nextVideo && isComponentMounted.current) {
       router.replace(`/player/${nextVideo.id}?slide=right` as any);
     }
   }, [nextVideo, router]);
 
   const playPrev = useCallback(() => {
-    if (prevVideo && isComponentMounted.current && !isSeekingRef.current) {
+    if (prevVideo && isComponentMounted.current) {
       router.replace(`/player/${prevVideo.id}?slide=left` as any);
     }
   }, [prevVideo, router]);
@@ -569,23 +449,43 @@ function PlayerContent({
     <View style={styles.container}>
       <StatusBar hidden={isFullscreen} />
 
-      <Animated.View
-        style={[
-          styles.videoWrapper,
-          { transform: [{ translateX: slideAnim }] },
-        ]}
-      >
-        <VideoView
-          player={player}
+      <Animated.View style={[styles.videoWrapper, { transform: [{ translateX: slideAnim }] }]}>
+        <Video
+          ref={videoRef}
+          source={{ uri: videoUri }}
           style={StyleSheet.absoluteFill}
-          nativeControls={false}
-          contentFit={contentFit}
+          paused={!isPlaying}
+          volume={volume}
+          rate={playbackRate}
+          resizeMode={contentFit}
+          onLoad={onLoad}
+          onProgress={onProgress}
+          onEnd={onEnd}
+          onBuffer={() => setIsBuffering(true)}
+          onLoadStart={() => setIsBuffering(true)}
+          onReadyForDisplay={() => setIsBuffering(false)}
+          selectedAudioTrack={selectedAudioTrack}
+          selectedTextTrack={selectedTextTrack}
+          textTrackStyle={{
+            textSize: 18,
+            textColor: '#FFFFFF',
+            textShadowColor: '#000000',
+            textShadowRadius: 2,
+          }}
+          bufferConfig={{
+            minBufferMs: 15000,
+            maxBufferMs: 50000,
+            bufferForPlaybackMs: 2500,
+            bufferForPlaybackAfterRebufferMs: 5000,
+          }}
         />
-        <Animated.View
-          {...panResponder.panHandlers}
-          style={StyleSheet.absoluteFill}
-          collapsable={false}
-        />
+        <Animated.View {...panResponder.panHandlers} style={StyleSheet.absoluteFill} collapsable={false} />
+
+        {isBuffering && !isEnded && (
+          <View style={styles.bufferingContainer}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+          </View>
+        )}
 
         {isLocked && isUIActive && !isEnded && (
           <View style={styles.unlockContainer}>
@@ -610,9 +510,7 @@ function PlayerContent({
           <View style={[styles.sideHUD, { left: 30 }]} pointerEvents="none">
             <MaterialIcons name="brightness-6" size={28} color="#fff" />
             <View style={styles.hudBarBg}>
-              <View
-                style={[styles.hudBarFill, { height: `${brightness * 100}%` }]}
-              />
+              <View style={[styles.hudBarFill, { height: `${brightness * 100}%` }]} />
             </View>
             <Text style={styles.hudText}>{Math.round(brightness * 100)}%</Text>
           </View>
@@ -620,137 +518,49 @@ function PlayerContent({
 
         {activeGesture === "volume" && (
           <View style={[styles.sideHUD, { right: 30 }]} pointerEvents="none">
-            <MaterialIcons
-              name={
-                player.muted || player.volume === 0
-                  ? "volume-off"
-                  : player.volume < 0.5
-                    ? "volume-down"
-                    : "volume-up"
-              }
-              size={28}
-              color="#fff"
-            />
+            <MaterialIcons name={volume === 0 ? "volume-off" : volume < 0.5 ? "volume-down" : "volume-up"} size={28} color="#fff" />
             <View style={styles.hudBarBg}>
-              <View
-                style={[
-                  styles.hudBarFill,
-                  { height: `${player.volume * 100}%` },
-                ]}
-              />
+              <View style={[styles.hudBarFill, { height: `${volume * 100}%` }]} />
             </View>
-            <Text style={styles.hudText}>
-              {Math.round(player.volume * 100)}%
-            </Text>
+            <Text style={styles.hudText}>{Math.round(volume * 100)}%</Text>
           </View>
         )}
 
         {seekPopup && (
-          <View
-            style={[
-              styles.seekPopupOverlay,
-              seekPopup.direction === "left"
-                ? { left: "15%" }
-                : { right: "15%" },
-            ]}
-            pointerEvents="none"
-          >
+          <View style={[styles.seekPopupOverlay, seekPopup.direction === "left" ? { left: "15%" } : { right: "15%" }]} pointerEvents="none">
             <View style={styles.seekPopupBox}>
-              <MaterialIcons
-                name={
-                  seekPopup.direction === "left" ? "replay-10" : "forward-10"
-                }
-                size={35}
-                color="#fff"
-              />
+              <MaterialIcons name={seekPopup.direction === "left" ? "replay-10" : "forward-10"} size={35} color="#fff" />
               <Text style={styles.seekPopupText}>{seekPopup.text}</Text>
             </View>
           </View>
         )}
 
         {!isLocked && (
-          <Animated.View
-            style={[
-              styles.controlsOverlay,
-              isEnded && styles.endScreenOverlay,
-              { opacity: fadeAnim },
-            ]}
-            pointerEvents={isUIActiveRef.current ? "box-none" : "none"}
-          >
+          <Animated.View style={[styles.controlsOverlay, isEnded && styles.endScreenOverlay, { opacity: fadeAnim }]} pointerEvents={isUIActiveRef.current ? "box-none" : "none"}>
             <BlurView intensity={40} tint="dark" style={styles.topControls}>
               <View style={styles.topLeft}>
-                <TouchableOpacity
-                  onPress={() => router.back()}
-                  style={styles.iconBtn}
-                >
+                <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
                   <MaterialIcons name="arrow-back-ios" size={24} color="#fff" />
                 </TouchableOpacity>
-                <Text style={styles.videoTitle} numberOfLines={1}>
-                  {videoTitle}
-                </Text>
+                <Text style={styles.videoTitle} numberOfLines={1}>{videoTitle}</Text>
               </View>
 
               <View style={styles.topRightControls}>
-                {availableSubtitleTracks.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowSubtitleMenu(!showSubtitleMenu);
-                      setShowAudioMenu(false);
-                      setShowSettings(false);
-                      resetControlsTimeout();
-                    }}
-                    style={styles.iconBtn}
-                  >
-                    <MaterialIcons
-                      name="subtitles"
-                      size={24}
-                      color={currentSubtitleTrack ? Colors.primary : "#fff"}
-                    />
+                {availableTextTracks.length > 0 && (
+                  <TouchableOpacity onPress={() => { setShowSubtitleMenu(!showSubtitleMenu); setShowAudioMenu(false); setShowSettings(false); resetControlsTimeout(); }} style={styles.iconBtn}>
+                    <MaterialIcons name="subtitles" size={24} color={selectedTextTrack ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
                 )}
-                {availableAudioTracks.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => {
-                      setShowAudioMenu(!showAudioMenu);
-                      setShowSubtitleMenu(false);
-                      setShowSettings(false);
-                      resetControlsTimeout();
-                    }}
-                    style={styles.iconBtn}
-                  >
-                    <MaterialIcons
-                      name="audiotrack"
-                      size={24}
-                      color={currentAudioTrack ? Colors.primary : "#fff"}
-                    />
+                {availableAudioTracks.length > 1 && (
+                  <TouchableOpacity onPress={() => { setShowAudioMenu(!showAudioMenu); setShowSubtitleMenu(false); setShowSettings(false); resetControlsTimeout(); }} style={styles.iconBtn}>
+                    <MaterialIcons name="audiotrack" size={24} color={selectedAudioTrack ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  onPress={() => {
-                    setShowSettings(!showSettings);
-                    setShowAudioMenu(false);
-                    setShowSubtitleMenu(false);
-                    resetControlsTimeout();
-                  }}
-                  style={styles.iconBtn}
-                >
+                <TouchableOpacity onPress={() => { setShowSettings(!showSettings); setShowAudioMenu(false); setShowSubtitleMenu(false); resetControlsTimeout(); }} style={styles.iconBtn}>
                   <MaterialIcons name="speed" size={24} color="#fff" />
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() =>
-                    setContentFit(
-                      contentFit === "contain" ? "cover" : "contain",
-                    )
-                  }
-                  style={styles.iconBtn}
-                >
-                  <MaterialIcons
-                    name={
-                      contentFit === "contain" ? "crop-free" : "aspect-ratio"
-                    }
-                    size={24}
-                    color="#fff"
-                  />
+                <TouchableOpacity onPress={() => setContentFit(contentFit === "contain" ? "cover" : "contain")} style={styles.iconBtn}>
+                  <MaterialIcons name={contentFit === "contain" ? "crop-free" : "aspect-ratio"} size={24} color="#fff" />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={lockScreen} style={styles.iconBtn}>
                   <MaterialIcons name="lock-outline" size={24} color="#fff" />
@@ -758,71 +568,29 @@ function PlayerContent({
               </View>
             </BlurView>
 
-            {showAudioMenu && (
+            {showAudioMenu && availableAudioTracks.length > 0 && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Audio Language</Text>
                 {availableAudioTracks.map((track, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.speedOption}
-                    onPress={() => safeSwitchAudioTrack(track)}
-                  >
-                    <Text
-                      style={[
-                        styles.speedText,
-                        currentAudioTrack?.id === track.id &&
-                          styles.activeSpeed,
-                      ]}
-                    >
-                      {track.language?.toUpperCase() ||
-                        track.title?.toUpperCase() ||
-                        `Track ${idx + 1}`}
+                  <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => onAudioTrackChange(track)}>
+                    <Text style={[styles.speedText, selectedAudioTrack?.language === track.language && styles.activeSpeed]}>
+                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Track ${idx + 1}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
             )}
 
-            {showSubtitleMenu && (
+            {showSubtitleMenu && availableTextTracks.length > 0 && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Subtitles</Text>
-                <TouchableOpacity
-                  style={styles.speedOption}
-                  onPress={() => {
-                    player.subtitleTrack = null;
-                    setShowSubtitleMenu(false);
-                    resetControlsTimeout();
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.speedText,
-                      !currentSubtitleTrack && styles.activeSpeed,
-                    ]}
-                  >
-                    None
-                  </Text>
+                <TouchableOpacity style={styles.speedOption} onPress={() => onTextTrackChange(null)}>
+                  <Text style={[styles.speedText, !selectedTextTrack && styles.activeSpeed]}>None</Text>
                 </TouchableOpacity>
-                {availableSubtitleTracks.map((track, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.speedOption}
-                    onPress={() => {
-                      player.subtitleTrack = track;
-                      setShowSubtitleMenu(false);
-                      resetControlsTimeout();
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.speedText,
-                        currentSubtitleTrack?.id === track.id &&
-                          styles.activeSpeed,
-                      ]}
-                    >
-                      {track.language?.toUpperCase() ||
-                        track.title?.toUpperCase() ||
-                        `Subtitle ${idx + 1}`}
+                {availableTextTracks.map((track, idx) => (
+                  <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => onTextTrackChange(track)}>
+                    <Text style={[styles.speedText, selectedTextTrack?.language === track.language && styles.activeSpeed]}>
+                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Subtitle ${idx + 1}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -833,23 +601,8 @@ function PlayerContent({
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Speed</Text>
                 {[0.5, 1.0, 1.25, 1.5, 2.0].map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    style={styles.speedOption}
-                    onPress={() => {
-                      player.playbackRate = s;
-                      setShowSettings(false);
-                      resetControlsTimeout();
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.speedText,
-                        player.playbackRate === s && styles.activeSpeed,
-                      ]}
-                    >
-                      {s}x
-                    </Text>
+                  <TouchableOpacity key={s} style={styles.speedOption} onPress={() => { setPlaybackRate(s); setShowSettings(false); resetControlsTimeout(); }}>
+                    <Text style={[styles.speedText, playbackRate === s && styles.activeSpeed]}>{s}x</Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
@@ -858,66 +611,27 @@ function PlayerContent({
             <View style={styles.centerControls} pointerEvents="box-none">
               {isEnded ? (
                 <View style={styles.endScreenContainer}>
-                  <TouchableOpacity
-                    onPress={playPrev}
-                    disabled={!prevVideo}
-                    style={[styles.endBtn, { opacity: prevVideo ? 1 : 0.3 }]}
-                  >
-                    <MaterialIcons
-                      name="skip-previous"
-                      size={50}
-                      color="#fff"
-                    />
+                  <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.endBtn, { opacity: prevVideo ? 1 : 0.3 }]}>
+                    <MaterialIcons name="skip-previous" size={50} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={replayVideo}
-                    style={styles.replayBtn}
-                  >
+                  <TouchableOpacity onPress={replayVideo} style={styles.replayBtn}>
                     <MaterialIcons name="replay" size={60} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={playNext}
-                    disabled={!nextVideo}
-                    style={[styles.endBtn, { opacity: nextVideo ? 1 : 0.3 }]}
-                  >
+                  <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.endBtn, { opacity: nextVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-next" size={50} color="#fff" />
                   </TouchableOpacity>
                 </View>
               ) : (
                 <View style={styles.centerNav} pointerEvents="box-none">
-                  <TouchableOpacity
-                    onPress={playPrev}
-                    disabled={!prevVideo}
-                    style={[styles.navBtn, { opacity: prevVideo ? 1 : 0.3 }]}
-                  >
-                    <MaterialIcons
-                      name="skip-previous"
-                      size={45}
-                      color="#fff"
-                    />
+                  <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.navBtn, { opacity: prevVideo ? 1 : 0.3 }]}>
+                    <MaterialIcons name="skip-previous" size={45} color="#fff" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }}
-                    onPress={() => {
-                      if (isPlaying) player.pause();
-                      else player.play();
-                      resetControlsTimeout();
-                    }}
-                    style={styles.playPauseBtn}
-                  >
-                    <MaterialIcons
-                      name={isPlaying ? "pause" : "play-arrow"}
-                      size={65}
-                      color="#fff"
-                    />
+                  <TouchableOpacity hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }} onPress={() => { setIsPlaying(!isPlaying); resetControlsTimeout(); }} style={styles.playPauseBtn}>
+                    <MaterialIcons name={isPlaying ? "pause" : "play-arrow"} size={65} color="#fff" />
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={playNext}
-                    disabled={!nextVideo}
-                    style={[styles.navBtn, { opacity: nextVideo ? 1 : 0.3 }]}
-                  >
+                  <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.navBtn, { opacity: nextVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-next" size={45} color="#fff" />
                   </TouchableOpacity>
                 </View>
@@ -929,36 +643,25 @@ function PlayerContent({
               <Slider
                 style={styles.slider}
                 minimumValue={0}
-                maximumValue={player.duration || 1}
+                maximumValue={duration || 1}
                 value={currentTime}
                 minimumTrackTintColor={Colors.primary}
                 maximumTrackTintColor="rgba(255,255,255,0.4)"
                 thumbTintColor={Colors.primary}
                 onSlidingComplete={(value) => safeSeek(value)}
               />
-              <Text style={styles.timeText}>{formatTime(player.duration)}</Text>
-              <TouchableOpacity
-                onPress={() => {
-                  if (isFullscreen) {
-                    ScreenOrientation.lockAsync(
-                      ScreenOrientation.OrientationLock.PORTRAIT_UP,
-                    );
-                    setIsFullscreen(false);
-                  } else {
-                    ScreenOrientation.lockAsync(
-                      ScreenOrientation.OrientationLock.LANDSCAPE,
-                    );
-                    setIsFullscreen(true);
-                  }
-                  resetControlsTimeout();
-                }}
-                style={styles.fullscreenBtn}
-              >
-                <MaterialIcons
-                  name={isFullscreen ? "fullscreen-exit" : "fullscreen"}
-                  size={26}
-                  color="#fff"
-                />
+              <Text style={styles.timeText}>{formatTime(duration)}</Text>
+              <TouchableOpacity onPress={() => {
+                if (isFullscreen) {
+                  ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+                  setIsFullscreen(false);
+                } else {
+                  ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+                  setIsFullscreen(true);
+                }
+                resetControlsTimeout();
+              }} style={styles.fullscreenBtn}>
+                <MaterialIcons name={isFullscreen ? "fullscreen-exit" : "fullscreen"} size={26} color="#fff" />
               </TouchableOpacity>
             </BlurView>
           </Animated.View>
@@ -970,158 +673,42 @@ function PlayerContent({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-  centerContainer: {
-    flex: 1,
-    backgroundColor: "#000",
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  centerContainer: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center" },
   videoWrapper: { flex: 1, justifyContent: "center", position: "relative" },
+  bufferingContainer: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", zIndex: 10 },
   unlockContainer: { position: "absolute", top: 50, left: 20, zIndex: 10 },
-  unlockBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.6)",
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 30,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
+  unlockBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.6)", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 30, borderWidth: 1, borderColor: Colors.primary },
   unlockText: { color: "#fff", fontWeight: "600", marginLeft: 8, fontSize: 15 },
-  centerHUD: {
-    position: "absolute",
-    alignSelf: "center",
-    backgroundColor: "rgba(0,0,0,0.8)",
-    paddingVertical: 10,
-    paddingHorizontal: 25,
-    borderRadius: 20,
-    alignItems: "center",
-    zIndex: 5,
-  },
+  centerHUD: { position: "absolute", alignSelf: "center", backgroundColor: "rgba(0,0,0,0.8)", paddingVertical: 10, paddingHorizontal: 25, borderRadius: 20, alignItems: "center", zIndex: 5 },
   hudTime: { color: "#fff", fontSize: 28, fontWeight: "bold" },
   hudSub: { color: Colors.primary, fontSize: 16, fontWeight: "bold" },
-  sideHUD: {
-    position: "absolute",
-    top: "30%",
-    backgroundColor: "rgba(0,0,0,0.6)",
-    paddingVertical: 20,
-    paddingHorizontal: 10,
-    borderRadius: 25,
-    alignItems: "center",
-    zIndex: 5,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  hudBarBg: {
-    width: 4,
-    height: 100,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    borderRadius: 2,
-    marginVertical: 15,
-    justifyContent: "flex-end",
-    overflow: "hidden",
-  },
-  hudBarFill: {
-    width: "100%",
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
-  },
+  sideHUD: { position: "absolute", top: "30%", backgroundColor: "rgba(0,0,0,0.6)", paddingVertical: 20, paddingHorizontal: 10, borderRadius: 25, alignItems: "center", zIndex: 5, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
+  hudBarBg: { width: 4, height: 100, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 2, marginVertical: 15, justifyContent: "flex-end", overflow: "hidden" },
+  hudBarFill: { width: "100%", backgroundColor: Colors.primary, borderRadius: 2 },
   hudText: { color: "#fff", fontSize: 12, fontWeight: "bold" },
   seekPopupOverlay: { position: "absolute", top: "45%", zIndex: 10 },
-  seekPopupBox: {
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.6)",
-    padding: 15,
-    borderRadius: 25,
-  },
-  seekPopupText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "bold",
-    marginTop: 5,
-  },
-  controlsOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "space-between",
-    zIndex: 2,
-  },
+  seekPopupBox: { alignItems: "center", backgroundColor: "rgba(0,0,0,0.6)", padding: 15, borderRadius: 25 },
+  seekPopupText: { color: "#fff", fontSize: 14, fontWeight: "bold", marginTop: 5 },
+  controlsOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: "space-between", zIndex: 2 },
   endScreenOverlay: { backgroundColor: "rgba(0,0,0,0.7)" },
-  topControls: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 15,
-    paddingTop: 50,
-    paddingBottom: 15,
-  },
-  topLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    paddingRight: 10,
-  },
-  videoTitle: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-    marginLeft: 5,
-    flex: 1,
-  },
+  topControls: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 15, paddingTop: 50, paddingBottom: 15 },
+  topLeft: { flexDirection: "row", alignItems: "center", flex: 1, paddingRight: 10 },
+  videoTitle: { color: "#fff", fontSize: 16, fontWeight: "600", marginLeft: 5, flex: 1 },
   topRightControls: { flexDirection: "row", alignItems: "center", gap: 5 },
   iconBtn: { padding: 8 },
-  settingsMenu: {
-    position: "absolute",
-    top: 100,
-    right: 20,
-    borderRadius: 15,
-    overflow: "hidden",
-    padding: 15,
-    zIndex: 20,
-    width: 200,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-  },
-  menuTitle: {
-    color: Colors.primary,
-    fontSize: 16,
-    fontWeight: "bold",
-    marginBottom: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.2)",
-  },
+  settingsMenu: { position: "absolute", top: 100, right: 20, borderRadius: 15, overflow: "hidden", padding: 15, zIndex: 20, width: 200, borderWidth: 1, borderColor: "rgba(255,255,255,0.1)" },
+  menuTitle: { color: Colors.primary, fontSize: 16, fontWeight: "bold", marginBottom: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.2)" },
   speedOption: { paddingVertical: 10 },
   speedText: { color: "#ccc", fontSize: 15 },
   activeSpeed: { color: "#fff", fontWeight: "bold" },
-  centerControls: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 3,
-  },
+  centerControls: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", zIndex: 3 },
   centerNav: { flexDirection: "row", alignItems: "center", gap: 30 },
   navBtn: { padding: 10 },
-  playPauseBtn: {
-    backgroundColor: "rgba(0,0,0,0.3)",
-    borderRadius: 60,
-    padding: 10,
-  },
+  playPauseBtn: { backgroundColor: "rgba(0,0,0,0.3)", borderRadius: 60, padding: 10 },
   endScreenContainer: { flexDirection: "row", alignItems: "center", gap: 35 },
   endBtn: { padding: 15 },
-  replayBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: 60,
-    padding: 15,
-    elevation: 10,
-  },
-  bottomControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 15,
-    paddingBottom: 35,
-    paddingTop: 10,
-  },
+  replayBtn: { backgroundColor: Colors.primary, borderRadius: 60, padding: 15, elevation: 10 },
+  bottomControls: { flexDirection: "row", alignItems: "center", paddingHorizontal: 15, paddingBottom: 35, paddingTop: 10 },
   timeText: { color: "#fff", fontSize: 12, width: 45, textAlign: "center" },
   slider: { flex: 1, height: 40, marginHorizontal: 5 },
   fullscreenBtn: { marginLeft: 5, padding: 5 },

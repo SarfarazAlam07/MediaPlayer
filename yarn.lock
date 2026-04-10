@@ -5605,6 +5605,11 @@ react-native-screens@*, "react-native-screens@>= 4.0.0", react-native-screens@~4
     react-native-is-edge-to-edge "^1.2.1"
     warn-once "^0.1.0"
 
+react-native-video@^6.19.1:
+  version "6.19.1"
+  resolved "https://registry.npmjs.org/react-native-video/-/react-native-video-6.19.1.tgz"
+  integrity sha512-Tbiyt0JMirVHc4XzGIANjs3SaNjFXQO2qe+buvY7xMJjlyCekkDjJqD9YtlaEloJD2PGWhoPytEXB6gVT7T6lw==
+
 react-native-volume-manager@^2.0.8:
   version "2.0.8"
   resolved "https://registry.npmjs.org/react-native-volume-manager/-/react-native-volume-manager-2.0.8.tgz"

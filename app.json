@@ -21,7 +21,17 @@
       "expo-router",
       "expo-media-library",
       "expo-navigation-bar",
-      "expo-video"
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "minSdkVersion": 24,
+            "enableProguardInReleaseBuilds": false
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {
