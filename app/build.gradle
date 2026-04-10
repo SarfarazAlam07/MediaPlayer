@@ -1,0 +1,20 @@
+tasks.whenTaskAdded((tas -> {
+    if (tas.name.contains("merge") && tas.name.contains("NativeLibs")) {
+        tasks.named(tas.name) {it
+            doFirst {
+                java.nio.file.Path notNeededDirectory = it.externalLibNativeLibs
+                        .getFiles()
+                        .stream()
+                        .filter(file -> file.toString().contains("jetified-react-native"))
+                        .findAny()
+                        .orElse(null)
+                        .toPath();
+                java.nio.file.Files.walk(notNeededDirectory).forEach(file -> {
+                    if (file.toString().contains("libc++_shared.so")) {
+                        java.nio.file.Files.delete(file);
+                    }
+                });
+            }
+        }
+    }
+}))

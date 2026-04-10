@@ -22,13 +22,13 @@
       "expo-media-library",
       "expo-navigation-bar",
       [
-        "expo-build-properties",
+        "react-native-vlc-media-player",
         {
+          "ios": {
+            "includeVLCKit": false
+          },
           "android": {
-            "compileSdkVersion": 34,
-            "targetSdkVersion": 34,
-            "minSdkVersion": 24,
-            "enableProguardInReleaseBuilds": false
+            "legacyJetifier": false
           }
         }
       ]

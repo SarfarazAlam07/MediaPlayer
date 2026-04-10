@@ -1,5 +1,4 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import Slider from "@react-native-community/slider";
 import { BlurView } from "expo-blur";
 import * as Brightness from "expo-brightness";
 import * as MediaLibrary from "expo-media-library";
@@ -16,15 +15,15 @@ import {
   Text,
   TouchableOpacity,
   View,
-  Platform,
 } from "react-native";
-import Video from "react-native-video";
+import { VLCPlayer } from "react-native-vlc-media-player";
 import { Colors } from "../../constants/Colors";
 import { useMediaStore } from "../../store/useMediaStore";
 import { usePlayerStore } from "../../store/usePlayerStore";
 import { formatTime } from "../../utils/timeFormat";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const Slider = require("@react-native-community/slider").default;
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function PlayerScreen() {
   const { id, slide } = useLocalSearchParams();
@@ -35,7 +34,6 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     isMounted.current = true;
-
     const loadVideo = async () => {
       if (typeof id === "string") {
         try {
@@ -52,7 +50,6 @@ export default function PlayerScreen() {
       }
     };
     loadVideo();
-
     return () => {
       isMounted.current = false;
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
@@ -92,96 +89,70 @@ function PlayerContent({
   const { globalVideos } = useMediaStore();
   const { sound: audioSound, pauseTrack } = usePlayerStore();
 
+  const playerRef = useRef<any>(null);
   const isComponentMounted = useRef(true);
-  const videoRef = useRef<any>(null);
   const isSeekingRef = useRef(false);
 
-  // Video state
+  // Player state
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isBuffering, setIsBuffering] = useState(false);
   const [volume, setVolume] = useState(1);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [selectedAudioTrack, setSelectedAudioTrack] = useState<any>(null);
+  const [selectedAudioTrack, setSelectedAudioTrack] = useState<number>(-1);
   const [availableAudioTracks, setAvailableAudioTracks] = useState<any[]>([]);
-  const [selectedTextTrack, setSelectedTextTrack] = useState<any>(null);
+  const [selectedTextTrack, setSelectedTextTrack] = useState<number>(-1);
   const [availableTextTracks, setAvailableTextTracks] = useState<any[]>([]);
 
-  // Pause audio when video starts
-  useEffect(() => {
-    if (audioSound && pauseTrack) {
-      pauseTrack();
-    }
-  }, []);
-
-  const currentIndex = globalVideos.findIndex((v) => v.id === videoId);
-  const prevVideo = currentIndex > 0 ? globalVideos[currentIndex - 1] : null;
-  const nextVideo =
-    currentIndex !== -1 && currentIndex < globalVideos.length - 1
-      ? globalVideos[currentIndex + 1]
-      : null;
-
-  const isEnded = duration > 0 && currentTime >= duration - 0.5 && !isPlaying;
-
+  // UI state
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [contentFit, setContentFit] = useState<"contain" | "cover" | "stretch">(
-    "contain",
-  );
   const [isLocked, setIsLocked] = useState(false);
   const isLockedRef = useRef(false);
-
   const [showSettings, setShowSettings] = useState(false);
   const [showAudioMenu, setShowAudioMenu] = useState(false);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
-
   const [isUIActive, setIsUIActive] = useState(true);
   const isUIActiveRef = useRef(true);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-
   const slideAnim = useRef(new Animated.Value(0)).current;
 
-  const [activeGesture, setActiveGesture] = useState<
-    "seek" | "volume" | "brightness" | null
-  >(null);
-  const activeGestureRef = useRef<"seek" | "volume" | "brightness" | null>(
-    null,
-  );
-
+  // Gesture state
+  const [activeGesture, setActiveGesture] = useState<"seek" | "volume" | "brightness" | null>(null);
+  const activeGestureRef = useRef<"seek" | "volume" | "brightness" | null>(null);
   const startVolRef = useRef(volume);
   const brightnessRef = useRef(0.5);
   const [brightness, setBrightness] = useState(0.5);
-
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const scrubTargetRef = useRef<number | null>(null);
   const scrubStartPosRef = useRef(0);
-
   const gestureStartTime = useRef(0);
   const lastTapTimeRef = useRef(0);
   const singleTapTimeoutRef = useRef<any>(null);
-  const [seekPopup, setSeekPopup] = useState<{
-    direction: "left" | "right";
-    text: string;
-  } | null>(null);
-
+  const [seekPopup, setSeekPopup] = useState<{ direction: "left" | "right"; text: string } | null>(null);
   const skipAccumulator = useRef(0);
   const skipTimeout = useRef<any>(null);
   const controlsTimeout = useRef<any>(null);
 
-  // Animation effect
+  // Navigation
+  const currentIndex = globalVideos.findIndex((v) => v.id === videoId);
+  const prevVideo = currentIndex > 0 ? globalVideos[currentIndex - 1] : null;
+  const nextVideo = currentIndex !== -1 && currentIndex < globalVideos.length - 1 ? globalVideos[currentIndex + 1] : null;
+  const isEnded = duration > 0 && currentTime >= duration - 0.5 && !isPlaying;
+
+  // Pause audio when video starts
+  useEffect(() => {
+    if (audioSound && pauseTrack) pauseTrack();
+  }, []);
+
+  // Animations
   useEffect(() => {
     if (slide === "left") slideAnim.setValue(-SCREEN_WIDTH);
     else if (slide === "right") slideAnim.setValue(SCREEN_WIDTH);
     else slideAnim.setValue(0);
-
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 350,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(slideAnim, { toValue: 0, duration: 350, useNativeDriver: true }).start();
   }, [videoId, slide]);
 
-  // Brightness init
+  // Brightness
   useEffect(() => {
     const initBright = async () => {
       const { status } = await Brightness.requestPermissionsAsync();
@@ -197,14 +168,11 @@ function PlayerContent({
   // Cleanup
   useEffect(() => {
     isComponentMounted.current = true;
-
     return () => {
       isComponentMounted.current = false;
-
-      if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
-      if (skipTimeout.current) clearTimeout(skipTimeout.current);
-      if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
-
+      controlsTimeout.current && clearTimeout(controlsTimeout.current);
+      skipTimeout.current && clearTimeout(skipTimeout.current);
+      singleTapTimeoutRef.current && clearTimeout(singleTapTimeoutRef.current);
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
   }, []);
@@ -212,10 +180,11 @@ function PlayerContent({
   useEffect(() => {
     if (isEnded) {
       showUI();
-      if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+      controlsTimeout.current && clearTimeout(controlsTimeout.current);
     }
   }, [isEnded]);
 
+  // UI functions
   const showUI = useCallback(() => {
     if (!isComponentMounted.current) return;
     setIsUIActive(true);
@@ -235,7 +204,7 @@ function PlayerContent({
 
   const resetControlsTimeout = useCallback(() => {
     if (activeGestureRef.current || isEnded || !isComponentMounted.current) return;
-    if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+    controlsTimeout.current && clearTimeout(controlsTimeout.current);
     showUI();
     controlsTimeout.current = setTimeout(() => hideUI(), 3500);
   }, [isEnded, showUI, hideUI]);
@@ -246,68 +215,89 @@ function PlayerContent({
     else resetControlsTimeout();
   }, [isEnded, hideUI, resetControlsTimeout]);
 
-  const lockScreen = useCallback(() => {
-    setIsLocked(true);
-    isLockedRef.current = true;
-    hideUI();
-  }, [hideUI]);
+  const lockScreen = useCallback(() => { setIsLocked(true); isLockedRef.current = true; hideUI(); }, [hideUI]);
+  const unlockScreen = useCallback(() => { setIsLocked(false); isLockedRef.current = false; resetControlsTimeout(); }, [resetControlsTimeout]);
 
-  const unlockScreen = useCallback(() => {
-    setIsLocked(false);
-    isLockedRef.current = false;
-    resetControlsTimeout();
-  }, [resetControlsTimeout]);
-
-  // Safe seek
+  // 🔥 CRITICAL: VLC uses 0-1 range for seek
   const safeSeek = useCallback((time: number) => {
-    if (!videoRef.current || !isComponentMounted.current) return;
-    if (isSeekingRef.current) return;
-
+    if (!playerRef.current || !isComponentMounted.current || isSeekingRef.current) return;
     isSeekingRef.current = true;
     const targetTime = Math.max(0, Math.min(duration || time, time));
-
-    videoRef.current.seek(targetTime);
-
-    setTimeout(() => {
-      isSeekingRef.current = false;
-    }, 100);
+    const seekValue = targetTime / duration; // Convert to 0-1 range
+    playerRef.current.seek = seekValue;
+    setTimeout(() => { isSeekingRef.current = false; }, 100);
   }, [duration]);
 
-  // Gesture sensitivity
-  const GESTURE_SENSITIVITY = 0.4;
+  // VLC Event Handlers
+  const onLoad = useCallback((data: any) => {
+    console.log("Video loaded:", data);
+    setDuration(data.duration);
+    
+    // Parse audio tracks (documentation format)
+    if (data.audioTracks && data.audioTracks.length > 0) {
+      setAvailableAudioTracks(data.audioTracks);
+      // Auto-select first non-disabled track (id !== -1)
+      const firstTrack = data.audioTracks.find((t: any) => t.id !== -1);
+      if (firstTrack) {
+        setSelectedAudioTrack(firstTrack.id);
+        if (playerRef.current) playerRef.current.audioTrack = firstTrack.id;
+      }
+    }
+    
+    // Parse subtitle tracks
+    if (data.textTracks && data.textTracks.length > 0) {
+      setAvailableTextTracks(data.textTracks);
+    }
+    
+    resetControlsTimeout();
+  }, []);
 
+  const onProgress = useCallback((data: any) => {
+    if (!isSeekingRef.current) {
+      setCurrentTime(data.currentTime);
+    }
+  }, []);
+
+  const onEnd = useCallback(() => { setIsPlaying(false); }, []);
+  const onError = useCallback((error: any) => console.error("VLC Error:", error), []);
+
+  // Track switching
+  const onAudioTrackChange = useCallback((trackId: number) => {
+    setSelectedAudioTrack(trackId);
+    if (playerRef.current) playerRef.current.audioTrack = trackId;
+    setShowAudioMenu(false);
+    resetControlsTimeout();
+  }, []);
+
+  const onTextTrackChange = useCallback((trackId: number) => {
+    setSelectedTextTrack(trackId);
+    if (playerRef.current) playerRef.current.textTrack = trackId;
+    setShowSubtitleMenu(false);
+    resetControlsTimeout();
+  }, []);
+
+  // Skip controls
+  const GESTURE_SENSITIVITY = 0.4;
   const executeSkip = useCallback((direction: "left" | "right") => {
     if (!isComponentMounted.current || isSeekingRef.current) return;
-
     skipAccumulator.current += direction === "right" ? 10 : -10;
-    const popupText =
-      skipAccumulator.current > 0
-        ? `+${skipAccumulator.current}s`
-        : `${skipAccumulator.current}s`;
-    setSeekPopup({ direction, text: popupText });
-
+    setSeekPopup({ direction, text: `${skipAccumulator.current > 0 ? "+" : ""}${skipAccumulator.current}s` });
     let newTime = currentTime + (direction === "right" ? 10 : -10);
-
     if (newTime < 0) newTime = 0;
     if (duration && newTime > duration) newTime = duration - 1;
-
     safeSeek(newTime);
-
-    if (skipTimeout.current) clearTimeout(skipTimeout.current);
     skipTimeout.current = setTimeout(() => {
       if (isComponentMounted.current) setSeekPopup(null);
       skipAccumulator.current = 0;
     }, 1000);
-
     resetControlsTimeout();
   }, [currentTime, duration, safeSeek, resetControlsTimeout]);
 
-  // PanResponder
+  // PanResponder (same as before, kept for gesture controls)
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (evt, gestureState) =>
-        Math.abs(gestureState.dx) > 10 || Math.abs(gestureState.dy) > 10,
+      onMoveShouldSetPanResponder: (_, { dx, dy }) => Math.abs(dx) > 10 || Math.abs(dy) > 10,
       onPanResponderGrant: () => {
         if (!isComponentMounted.current) return;
         gestureStartTime.current = Date.now();
@@ -315,26 +305,18 @@ function PlayerContent({
         startVolRef.current = volume;
         activeGestureRef.current = null;
         setActiveGesture(null);
-        if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+        controlsTimeout.current && clearTimeout(controlsTimeout.current);
       },
-      onPanResponderMove: (evt, gestureState) => {
+      onPanResponderMove: (evt, { dx, dy }) => {
         if (isLockedRef.current || isEnded || !isComponentMounted.current) return;
-        const { dx, dy } = gestureState;
         const isRightSide = evt.nativeEvent.pageX > SCREEN_WIDTH / 2;
-
         if (!activeGestureRef.current) {
-          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 15) {
-            activeGestureRef.current = "seek";
-            setActiveGesture("seek");
-          } else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 15) {
-            activeGestureRef.current = isRightSide ? "volume" : "brightness";
-            setActiveGesture(activeGestureRef.current);
-          }
-          return;
+          if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 15) activeGestureRef.current = "seek";
+          else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 15) activeGestureRef.current = isRightSide ? "volume" : "brightness";
+          else return;
+          setActiveGesture(activeGestureRef.current);
         }
-
         if (isUIActiveRef.current) hideUI();
-
         if (activeGestureRef.current === "seek") {
           const offsetSeconds = (dx / SCREEN_WIDTH) * 60;
           const newPos = Math.max(0, Math.min(duration || Infinity, scrubStartPosRef.current + offsetSeconds));
@@ -344,6 +326,7 @@ function PlayerContent({
           let newVol = startVolRef.current - (dy / 500) * GESTURE_SENSITIVITY;
           newVol = Math.max(0, Math.min(1, newVol));
           setVolume(newVol);
+          if (playerRef.current) playerRef.current.volume = newVol;
         } else if (activeGestureRef.current === "brightness") {
           let newBright = brightnessRef.current - (dy / 500) * GESTURE_SENSITIVITY;
           newBright = Math.max(0, Math.min(1, newBright));
@@ -354,7 +337,7 @@ function PlayerContent({
           }
         }
       },
-      onPanResponderRelease: (evt, gestureState) => {
+      onPanResponderRelease: (evt, { dx, dy }) => {
         if (!isComponentMounted.current) return;
         if (isLockedRef.current || isEnded) {
           if (!activeGestureRef.current) handleScreenTap();
@@ -362,19 +345,14 @@ function PlayerContent({
           setActiveGesture(null);
           return;
         }
-
         if (activeGestureRef.current === "seek" && scrubTargetRef.current !== null && !isSeekingRef.current) {
           safeSeek(scrubTargetRef.current);
         }
-
         if (!activeGestureRef.current) {
           const now = Date.now();
-          if (
-            now - gestureStartTime.current < 400 &&
-            Math.sqrt(gestureState.dx ** 2 + gestureState.dy ** 2) < 20
-          ) {
+          if (now - gestureStartTime.current < 400 && Math.sqrt(dx ** 2 + dy ** 2) < 20) {
             if (now - lastTapTimeRef.current < 300) {
-              if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
+              singleTapTimeoutRef.current && clearTimeout(singleTapTimeoutRef.current);
               lastTapTimeRef.current = 0;
               if (evt.nativeEvent.pageX < SCREEN_WIDTH / 3) executeSkip("left");
               else if (evt.nativeEvent.pageX > (SCREEN_WIDTH * 2) / 3) executeSkip("right");
@@ -384,109 +362,48 @@ function PlayerContent({
             }
           }
         }
-
         activeGestureRef.current = null;
         setActiveGesture(null);
         setScrubTime(null);
         scrubTargetRef.current = null;
-
         if (brightnessRef.current !== brightness) setBrightness(brightnessRef.current);
       },
-    }),
+    })
   ).current;
 
-  // Video event handlers
-  const onLoad = useCallback((data: any) => {
-    setDuration(data.duration);
-    setAvailableAudioTracks(data.audioTracks || []);
-    setAvailableTextTracks(data.textTracks || []);
-    if (data.audioTracks?.length > 0) {
-      setSelectedAudioTrack(data.audioTracks[0]);
-    }
-    resetControlsTimeout();
-  }, []);
-
-  const onProgress = useCallback((data: any) => {
-    if (!isSeekingRef.current) {
-      setCurrentTime(data.currentTime);
-    }
-  }, []);
-
-  const onEnd = useCallback(() => {
-    setIsPlaying(false);
-  }, []);
-
-  const onAudioTrackChange = useCallback((track: any) => {
-    setSelectedAudioTrack(track);
-    setShowAudioMenu(false);
-    resetControlsTimeout();
-  }, []);
-
-  const onTextTrackChange = useCallback((track: any) => {
-    setSelectedTextTrack(track);
-    setShowSubtitleMenu(false);
-    resetControlsTimeout();
-  }, []);
-
   const playNext = useCallback(() => {
-    if (nextVideo && isComponentMounted.current) {
-      router.replace(`/player/${nextVideo.id}?slide=right` as any);
-    }
+    if (nextVideo && isComponentMounted.current) router.replace(`/player/${nextVideo.id}?slide=right`);
   }, [nextVideo, router]);
-
   const playPrev = useCallback(() => {
-    if (prevVideo && isComponentMounted.current) {
-      router.replace(`/player/${prevVideo.id}?slide=left` as any);
-    }
+    if (prevVideo && isComponentMounted.current) router.replace(`/player/${prevVideo.id}?slide=left`);
   }, [prevVideo, router]);
-
-  const replayVideo = useCallback(() => {
-    safeSeek(0);
-    resetControlsTimeout();
-  }, [safeSeek, resetControlsTimeout]);
+  const replayVideo = useCallback(() => { safeSeek(0); resetControlsTimeout(); }, [safeSeek, resetControlsTimeout]);
 
   return (
     <View style={styles.container}>
       <StatusBar hidden={isFullscreen} />
-
       <Animated.View style={[styles.videoWrapper, { transform: [{ translateX: slideAnim }] }]}>
-        <Video
-          ref={videoRef}
-          source={{ uri: videoUri }}
+        <VLCPlayer
+          ref={playerRef}
           style={StyleSheet.absoluteFill}
+          source={{ uri: videoUri }}
           paused={!isPlaying}
           volume={volume}
           rate={playbackRate}
-          resizeMode={contentFit}
+          audioTrack={selectedAudioTrack}
+          textTrack={selectedTextTrack}
+          videoAspectRatio="16:9"
+          autoAspectRatio={false}
+          resizeMode="contain"
+          autoplay={true}
           onLoad={onLoad}
           onProgress={onProgress}
           onEnd={onEnd}
-          onBuffer={() => setIsBuffering(true)}
-          onLoadStart={() => setIsBuffering(true)}
-          onReadyForDisplay={() => setIsBuffering(false)}
-          selectedAudioTrack={selectedAudioTrack}
-          selectedTextTrack={selectedTextTrack}
-          textTrackStyle={{
-            textSize: 18,
-            textColor: '#FFFFFF',
-            textShadowColor: '#000000',
-            textShadowRadius: 2,
-          }}
-          bufferConfig={{
-            minBufferMs: 15000,
-            maxBufferMs: 50000,
-            bufferForPlaybackMs: 2500,
-            bufferForPlaybackAfterRebufferMs: 5000,
-          }}
+          onError={onError}
         />
         <Animated.View {...panResponder.panHandlers} style={StyleSheet.absoluteFill} collapsable={false} />
 
-        {isBuffering && !isEnded && (
-          <View style={styles.bufferingContainer}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-          </View>
-        )}
-
+        {/* Lock UI */}
         {isLocked && isUIActive && !isEnded && (
           <View style={styles.unlockContainer}>
             <TouchableOpacity style={styles.unlockBtn} onPress={unlockScreen}>
@@ -496,36 +413,27 @@ function PlayerContent({
           </View>
         )}
 
+        {/* HUDs */}
         {activeGesture === "seek" && scrubTime !== null && (
           <View style={styles.centerHUD} pointerEvents="none">
             <Text style={styles.hudTime}>{formatTime(scrubTime)}</Text>
-            <Text style={styles.hudSub}>
-              [ {scrubTime - scrubStartPosRef.current >= 0 ? "+" : "-"}
-              {Math.floor(Math.abs(scrubTime - scrubStartPosRef.current))}s ]
-            </Text>
+            <Text style={styles.hudSub}>[{scrubTime >= scrubStartPosRef.current ? "+" : "-"}{Math.abs(Math.floor(scrubTime - scrubStartPosRef.current))}s]</Text>
           </View>
         )}
-
         {activeGesture === "brightness" && (
           <View style={[styles.sideHUD, { left: 30 }]} pointerEvents="none">
             <MaterialIcons name="brightness-6" size={28} color="#fff" />
-            <View style={styles.hudBarBg}>
-              <View style={[styles.hudBarFill, { height: `${brightness * 100}%` }]} />
-            </View>
+            <View style={styles.hudBarBg}><View style={[styles.hudBarFill, { height: `${brightness * 100}%` }]} /></View>
             <Text style={styles.hudText}>{Math.round(brightness * 100)}%</Text>
           </View>
         )}
-
         {activeGesture === "volume" && (
           <View style={[styles.sideHUD, { right: 30 }]} pointerEvents="none">
             <MaterialIcons name={volume === 0 ? "volume-off" : volume < 0.5 ? "volume-down" : "volume-up"} size={28} color="#fff" />
-            <View style={styles.hudBarBg}>
-              <View style={[styles.hudBarFill, { height: `${volume * 100}%` }]} />
-            </View>
+            <View style={styles.hudBarBg}><View style={[styles.hudBarFill, { height: `${volume * 100}%` }]} /></View>
             <Text style={styles.hudText}>{Math.round(volume * 100)}%</Text>
           </View>
         )}
-
         {seekPopup && (
           <View style={[styles.seekPopupOverlay, seekPopup.direction === "left" ? { left: "15%" } : { right: "15%" }]} pointerEvents="none">
             <View style={styles.seekPopupBox}>
@@ -535,6 +443,7 @@ function PlayerContent({
           </View>
         )}
 
+        {/* Controls Overlay */}
         {!isLocked && (
           <Animated.View style={[styles.controlsOverlay, isEnded && styles.endScreenOverlay, { opacity: fadeAnim }]} pointerEvents={isUIActiveRef.current ? "box-none" : "none"}>
             <BlurView intensity={40} tint="dark" style={styles.topControls}>
@@ -544,23 +453,19 @@ function PlayerContent({
                 </TouchableOpacity>
                 <Text style={styles.videoTitle} numberOfLines={1}>{videoTitle}</Text>
               </View>
-
               <View style={styles.topRightControls}>
                 {availableTextTracks.length > 0 && (
                   <TouchableOpacity onPress={() => { setShowSubtitleMenu(!showSubtitleMenu); setShowAudioMenu(false); setShowSettings(false); resetControlsTimeout(); }} style={styles.iconBtn}>
-                    <MaterialIcons name="subtitles" size={24} color={selectedTextTrack ? Colors.primary : "#fff"} />
+                    <MaterialIcons name="subtitles" size={24} color={selectedTextTrack !== -1 ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
                 )}
                 {availableAudioTracks.length > 1 && (
                   <TouchableOpacity onPress={() => { setShowAudioMenu(!showAudioMenu); setShowSubtitleMenu(false); setShowSettings(false); resetControlsTimeout(); }} style={styles.iconBtn}>
-                    <MaterialIcons name="audiotrack" size={24} color={selectedAudioTrack ? Colors.primary : "#fff"} />
+                    <MaterialIcons name="audiotrack" size={24} color={selectedAudioTrack !== -1 ? Colors.primary : "#fff"} />
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={() => { setShowSettings(!showSettings); setShowAudioMenu(false); setShowSubtitleMenu(false); resetControlsTimeout(); }} style={styles.iconBtn}>
                   <MaterialIcons name="speed" size={24} color="#fff" />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setContentFit(contentFit === "contain" ? "cover" : "contain")} style={styles.iconBtn}>
-                  <MaterialIcons name={contentFit === "contain" ? "crop-free" : "aspect-ratio"} size={24} color="#fff" />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={lockScreen} style={styles.iconBtn}>
                   <MaterialIcons name="lock-outline" size={24} color="#fff" />
@@ -568,39 +473,42 @@ function PlayerContent({
               </View>
             </BlurView>
 
+            {/* Audio Track Menu */}
             {showAudioMenu && availableAudioTracks.length > 0 && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Audio Language</Text>
-                {availableAudioTracks.map((track, idx) => (
-                  <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => onAudioTrackChange(track)}>
-                    <Text style={[styles.speedText, selectedAudioTrack?.language === track.language && styles.activeSpeed]}>
-                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Track ${idx + 1}`}
+                {availableAudioTracks.map((track) => (
+                  <TouchableOpacity key={track.id} style={styles.speedOption} onPress={() => onAudioTrackChange(track.id)}>
+                    <Text style={[styles.speedText, selectedAudioTrack === track.id && styles.activeSpeed]}>
+                      {track.name || `Track ${track.id}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
             )}
 
+            {/* Subtitle Menu */}
             {showSubtitleMenu && availableTextTracks.length > 0 && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Subtitles</Text>
-                <TouchableOpacity style={styles.speedOption} onPress={() => onTextTrackChange(null)}>
-                  <Text style={[styles.speedText, !selectedTextTrack && styles.activeSpeed]}>None</Text>
+                <TouchableOpacity style={styles.speedOption} onPress={() => onTextTrackChange(-1)}>
+                  <Text style={[styles.speedText, selectedTextTrack === -1 && styles.activeSpeed]}>None</Text>
                 </TouchableOpacity>
-                {availableTextTracks.map((track, idx) => (
-                  <TouchableOpacity key={idx} style={styles.speedOption} onPress={() => onTextTrackChange(track)}>
-                    <Text style={[styles.speedText, selectedTextTrack?.language === track.language && styles.activeSpeed]}>
-                      {track.language?.toUpperCase() || track.title?.toUpperCase() || `Subtitle ${idx + 1}`}
+                {availableTextTracks.map((track) => (
+                  <TouchableOpacity key={track.id} style={styles.speedOption} onPress={() => onTextTrackChange(track.id)}>
+                    <Text style={[styles.speedText, selectedTextTrack === track.id && styles.activeSpeed]}>
+                      {track.name || `Subtitle ${track.id}`}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </BlurView>
             )}
 
+            {/* Speed Menu */}
             {showSettings && (
               <BlurView intensity={50} tint="dark" style={styles.settingsMenu}>
                 <Text style={styles.menuTitle}>Speed</Text>
-                {[0.5, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
                   <TouchableOpacity key={s} style={styles.speedOption} onPress={() => { setPlaybackRate(s); setShowSettings(false); resetControlsTimeout(); }}>
                     <Text style={[styles.speedText, playbackRate === s && styles.activeSpeed]}>{s}x</Text>
                   </TouchableOpacity>
@@ -608,6 +516,7 @@ function PlayerContent({
               </BlurView>
             )}
 
+            {/* Center Controls */}
             <View style={styles.centerControls} pointerEvents="box-none">
               {isEnded ? (
                 <View style={styles.endScreenContainer}>
@@ -622,15 +531,13 @@ function PlayerContent({
                   </TouchableOpacity>
                 </View>
               ) : (
-                <View style={styles.centerNav} pointerEvents="box-none">
+                <View style={styles.centerNav}>
                   <TouchableOpacity onPress={playPrev} disabled={!prevVideo} style={[styles.navBtn, { opacity: prevVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-previous" size={45} color="#fff" />
                   </TouchableOpacity>
-
                   <TouchableOpacity hitSlop={{ top: 25, bottom: 25, left: 25, right: 25 }} onPress={() => { setIsPlaying(!isPlaying); resetControlsTimeout(); }} style={styles.playPauseBtn}>
                     <MaterialIcons name={isPlaying ? "pause" : "play-arrow"} size={65} color="#fff" />
                   </TouchableOpacity>
-
                   <TouchableOpacity onPress={playNext} disabled={!nextVideo} style={[styles.navBtn, { opacity: nextVideo ? 1 : 0.3 }]}>
                     <MaterialIcons name="skip-next" size={45} color="#fff" />
                   </TouchableOpacity>
@@ -638,6 +545,7 @@ function PlayerContent({
               )}
             </View>
 
+            {/* Bottom Controls */}
             <BlurView intensity={40} tint="dark" style={styles.bottomControls}>
               <Text style={styles.timeText}>{formatTime(currentTime)}</Text>
               <Slider
@@ -648,7 +556,7 @@ function PlayerContent({
                 minimumTrackTintColor={Colors.primary}
                 maximumTrackTintColor="rgba(255,255,255,0.4)"
                 thumbTintColor={Colors.primary}
-                onSlidingComplete={(value) => safeSeek(value)}
+                onSlidingComplete={safeSeek}
               />
               <Text style={styles.timeText}>{formatTime(duration)}</Text>
               <TouchableOpacity onPress={() => {
@@ -675,7 +583,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   centerContainer: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center" },
   videoWrapper: { flex: 1, justifyContent: "center", position: "relative" },
-  bufferingContainer: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)", zIndex: 10 },
   unlockContainer: { position: "absolute", top: 50, left: 20, zIndex: 10 },
   unlockBtn: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.6)", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 30, borderWidth: 1, borderColor: Colors.primary },
   unlockText: { color: "#fff", fontWeight: "600", marginLeft: 8, fontSize: 15 },
