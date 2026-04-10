@@ -20,18 +20,7 @@
     "plugins": [
       "expo-router",
       "expo-media-library",
-      "expo-navigation-bar",
-      [
-        "react-native-vlc-media-player",
-        {
-          "ios": {
-            "includeVLCKit": false
-          },
-          "android": {
-            "legacyJetifier": false
-          }
-        }
-      ]
+      "expo-navigation-bar"
     ],
     "extra": {
       "eas": {
